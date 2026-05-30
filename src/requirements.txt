@@ -6,3 +6,6 @@ requests==2.32.3
 gunicorn==23.0.0
 junos-eznc==2.7.6
 defusedxml==0.7.1
+# anthropic SDK powers the /api/mv/orchestrator LLM path (Telegram /ask + AI Command);
+# if it's missing the orchestrator silently degrades to offline rule-based diagnosis.
+anthropic==0.105.2
