@@ -9556,9 +9556,13 @@ document.querySelectorAll('.tab[data-tab^="mv-"]').forEach(tab => {
 
     if (typeof window.setAiThinking === 'function') window.setAiThinking(true);
 
-    // Route to existing /api/chat coordinator if available, otherwise demo
+    // Route to existing /api/chat coordinator if available, otherwise demo.
+    // Use absolute API base so the panel works when served from the :8080
+    // static server (relative '/api/chat' would hit :8080, which 404s and
+    // looked like "backend offline"). API === 'http://localhost:5757'.
     const body = { message: q, hostname: window.selDevice?.h || '' };
-    fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+    const aiChatBase = window.location.port === '5757' ? '' : API;
+    fetch(aiChatBase + '/api/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
       .then(r => r.json())
       .then(d => {
         const text = d.result?.answer || d.result?.explanation || d.suggestions?.join('\n• ') || JSON.stringify(d).slice(0, 800);
