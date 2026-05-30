@@ -2,9 +2,11 @@
 # Start DCN Network Tool wired to the local Docker lab
 set -e
 
+# network-lab/ lives inside the tool root, so the app is one level up (not under a
+# nested 04_Scripts_Tools/… — that legacy path was wrong and broke `cd "$APP_DIR"`).
 LAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="$LAB_DIR/../04_Scripts_Tools/DCN_Network_Tool"
-DEMO_DIR="$LAB_DIR/.."
+APP_DIR="$(cd "$LAB_DIR/.." && pwd)"   # .../DCN_Network_Tool  (app.py is in $APP_DIR/src)
+DEMO_DIR="$APP_DIR"
 
 echo "═══════════════════════════════════════════════════"
 echo "  DCN Network Tool — LAB MODE"
@@ -31,12 +33,16 @@ with open('$HOME/.env') as f:
   export ANTHROPIC_API_KEY
 fi
 
-# Load lab env
-set -a
-source "$LAB_DIR/.env.lab"
-set +a
+# Load lab env overrides IF present — app.py has sane built-in defaults without it
+# (don't let a missing .env.lab kill the script under `set -e`).
+if [ -f "$LAB_DIR/.env.lab" ]; then
+  set -a
+  source "$LAB_DIR/.env.lab"
+  set +a
+fi
+: "${DCN_PORT:=5757}"; export DCN_PORT
 
-echo "SSH mode : $DCN_SSH_MODE (user=$DCN_SSH_USER)"
+echo "SSH mode : ${DCN_SSH_MODE:-default} (user=${DCN_SSH_USER:-unset})"
 echo "Inventory: $DCN_SECURECRT_CSV"
 echo "LLM      : $LLM_ENABLED ($LLM_MODEL)"
 
@@ -51,6 +57,8 @@ echo "  Flask API: http://localhost:$DCN_PORT"
 echo "  Demo UI  : http://localhost:8080/"
 echo "═══════════════════════════════════════════════════"
 
-cd "$APP_DIR"
-source venv_lab/bin/activate
+# app.py lives in src/ and imports sibling modules (multivendor_extensions,
+# preflight_twin, preflight_run) — it MUST run with src/ as the working directory.
+source "$APP_DIR/venv_lab/bin/activate"
+cd "$APP_DIR/src"
 python3 app.py
