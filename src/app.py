@@ -42,6 +42,7 @@ import urllib.parse
 from dotenv import load_dotenv
 load_dotenv()
 import csv
+import hmac
 import json
 import math
 import re
@@ -65,7 +66,57 @@ import requests as _requests
 from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
 
 app = Flask(__name__)
-CORS(app)
+
+# ── CORS — scope to the dashboard origin(s), never '*' ────────────────────────
+# The dashboard is served same-origin from this app (port 5757) and the demo UI
+# runs on 8080, so CORS is only needed for those localhost dev origins.
+# Override with a comma-separated DCN_CORS_ORIGINS env var if your layout differs.
+_CORS_ORIGINS = [
+    o.strip() for o in os.environ.get(
+        "DCN_CORS_ORIGINS",
+        "http://localhost:5757,http://localhost:8080,http://127.0.0.1:5757,http://127.0.0.1:8080",
+    ).split(",") if o.strip()
+]
+CORS(app, resources={r"/api/*": {"origins": _CORS_ORIGINS}})
+
+# ── API auth (shared secret) ──────────────────────────────────────────────────
+# Mutating/privileged endpoints execute network operations and shell-backed
+# remediation, chaos, and config-change actions, so they MUST require an
+# X-API-Key header that matches the DCN_API_KEY env var (compared with
+# hmac.compare_digest to avoid timing leaks).
+# Fail-closed: if DCN_API_KEY is unset, all POST/PUT/PATCH/DELETE routes return
+# HTTP 503 — never allow-by-default. Read-only GET/HEAD/OPTIONS endpoints stay
+# open for the dashboard (which is itself served same-origin from this app).
+DCN_API_KEY = os.environ.get("DCN_API_KEY", "")
+# GET paths that trigger privileged actions — reserved for future use.
+_PRIVILEGED_GET_PREFIXES: tuple[str, ...] = ()
+
+
+def _is_protected_request() -> bool:
+    """True if the current request must present a valid API key."""
+    method = request.method.upper()
+    if method in ("GET", "HEAD", "OPTIONS"):
+        return any(request.path.startswith(p) for p in _PRIVILEGED_GET_PREFIXES)
+    # POST/PUT/PATCH/DELETE — every mutating call is privileged.
+    return True
+
+
+@app.before_request
+def _require_api_key():
+    """Gate privileged/mutating endpoints behind the DCN_API_KEY shared secret."""
+    if not _is_protected_request():
+        return None
+    if not DCN_API_KEY:
+        # Fail closed — no key configured means no privileged access at all.
+        return jsonify({
+            "error": "server not configured for privileged operations",
+            "detail": "Set the DCN_API_KEY env var to enable mutating endpoints.",
+        }), 503
+    supplied = request.headers.get("X-API-Key", "")
+    if not supplied or not hmac.compare_digest(supplied, DCN_API_KEY):
+        return jsonify({"error": "unauthorized", "detail": "Missing or invalid X-API-Key."}), 403
+    return None
+
 
 # ── NAPALM Integration ────────────────────────────────────────────────────────
 try:
@@ -15011,10 +15062,15 @@ def api_agent_stream():
             except _QueueEmpty:
                 yield 'data: {"step":"heartbeat","level":"ping"}\n\n'
 
+    # Echo the request Origin if it is in the allowed list; fall back to the
+    # first configured origin. Never emit '*' — that would allow any origin to
+    # read the SSE stream without credentials.
+    _req_origin = request.headers.get("Origin", "")
+    _allow_origin = _req_origin if _req_origin in _CORS_ORIGINS else _CORS_ORIGINS[0]
     return app.response_class(
         gen(), mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                 "Access-Control-Allow-Origin": "*"})
+                 "Access-Control-Allow-Origin": _allow_origin})
 
 
 @app.route("/api/agent/log", methods=["GET"])
@@ -15366,7 +15422,12 @@ except Exception as _aegis_err:  # noqa: BLE001 — never block app boot on AEGI
 
 
 if __name__ == "__main__":
+    import sys as _sys
     port = int(os.environ.get("DCN_PORT", "5757"))
+    # Bind to loopback by default; require an explicit DCN_HOST=0.0.0.0 to expose
+    # the privileged API on all interfaces — and only do so together with a strong
+    # DCN_API_KEY and controlled network access.
+    host = os.environ.get("DCN_HOST", "127.0.0.1")
     print(f"DCN Network Tool starting — {len(DEVICES)} devices loaded")
     print(f"SSH Key: {SSH_KEY_PATH}")
     print(f"LLM: {'enabled' if LLM_ENABLED else 'disabled'} — model={LLM_MODEL} ollama={OLLAMA_URL} fallback={MODEL_RUNNER_URL}")
@@ -15377,7 +15438,13 @@ if __name__ == "__main__":
     else:
         print("JMCP: disabled (set JMCP_ENABLED=true to enable)")
     print(f"NAPALM: {'available' if NAPALM_AVAILABLE else 'NOT installed'} — {sum(len(d) for d in NAPALM_SITES.values())} devices in {len(NAPALM_SITES)} sites")
+    if host == "0.0.0.0":  # nosec B104 — explicit, opt-in exposure via DCN_HOST
+        print(
+            f"[WARNING] Binding to {host}:{port} — privileged API exposed on all interfaces. "
+            f"Ensure DCN_API_KEY is set and network access is controlled.",
+            file=_sys.stderr,
+        )
     # Start multivendor background services
     if _MV_ENABLED:
         init_mv_services()
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host=host, port=port, debug=False)
