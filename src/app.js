@@ -3,6 +3,25 @@ const API = "http://localhost:5757/api";
 let allDevices = [], selectedDev = null, roleFilter = "", cmdHistory = [], lastMultiData = {};
 let lastPortData = null, lastAnalysisData = null, lastISPData = null;
 
+// ── API key injection ───────────────────────────────────────────────────────
+// Privileged/mutating endpoints require an X-API-Key header (MVLAB_API_KEY on the
+// server). The key is stored in localStorage under "mvlab_api_key"; set it from the
+// browser console once: localStorage.setItem("mvlab_api_key", "<key>"). We wrap the
+// global fetch so every call to the API automatically carries the header.
+(function attachApiKey() {
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, init = {}) => {
+    const url = typeof input === "string" ? input : (input && input.url) || "";
+    const key = (() => { try { return localStorage.getItem("mvlab_api_key"); } catch { return null; } })();
+    if (key && url.startsWith(API)) {
+      const headers = new Headers(init.headers || (typeof input !== "string" && input.headers) || {});
+      if (!headers.has("X-API-Key")) headers.set("X-API-Key", key);
+      init = { ...init, headers };
+    }
+    return nativeFetch(input, init);
+  };
+})();
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
   try {

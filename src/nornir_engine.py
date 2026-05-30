@@ -277,10 +277,14 @@ if __name__ == "__main__":
     parser.add_argument("--csv",     default=None,         help="Lab inventory CSV path")
     args = parser.parse_args()
 
-    # Load inventory CSV
+    # Load inventory CSV. nornir_engine.py lives in src/, one level below the repo
+    # root, so the lab inventory is at REPO_ROOT/network-lab/lab_inventory.csv. The
+    # previous "../../network-lab/..." resolved ABOVE the repo and never found it.
+    from pathlib import Path
+    _repo_root = Path(os.environ.get("MVLAB_REPO_ROOT") or Path(__file__).resolve().parents[1])
     csv_path = args.csv or os.environ.get(
         "DCN_SECURECRT_CSV",
-        os.path.join(os.path.dirname(__file__), "../../network-lab/lab_inventory.csv")
+        str(_repo_root / "network-lab" / "lab_inventory.csv"),
     )
     if not os.path.exists(csv_path):
         print(f"ERROR: CSV not found: {csv_path}", file=sys.stderr)

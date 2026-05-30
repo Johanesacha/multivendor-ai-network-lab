@@ -13,23 +13,32 @@ Endpoints:
 All responses: {"hostname":str, "commands":[str], "results":[{"cmd":str,"output":str,"elapsed_ms":int}],
                 "total_elapsed_ms":int}
 
-Auth: HTTP Basic (user=admin, password read from CLI_PROXY_PASSWORD env, default "change-me-in-prod")
-Listens: 0.0.0.0:8080
+Auth: HTTP Basic (user=admin, password read from CLI_PROXY_PASSWORD env — required,
+      fail-closed if unset). Listens on 127.0.0.1 by default; set CLI_PROXY_HOST to
+      the mgmt IP (e.g. 0.0.0.0 or a 10.200.0.x address) to expose it deliberately.
 """
 
 import base64
+import hmac
 import json
 import os
 import socket
 import subprocess
+import sys
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
 HOSTNAME  = socket.gethostname()
+HOST      = os.environ.get("CLI_PROXY_HOST", "127.0.0.1")
 PORT      = int(os.environ.get("CLI_PROXY_PORT", "8080"))
-PASSWORD  = os.environ.get("CLI_PROXY_PASSWORD", "change-me-in-prod")
+PASSWORD  = os.environ.get("CLI_PROXY_PASSWORD", "")
+if not PASSWORD:
+    # Fail closed — never run with a default/blank password (this proxy executes
+    # vtysh commands on the FRR container).
+    print("FATAL: CLI_PROXY_PASSWORD is not set — refusing to start.", file=sys.stderr)
+    sys.exit(1)
 _CRED_B64 = base64.b64encode(f"admin:{PASSWORD}".encode()).decode()
 
 
@@ -61,14 +70,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
         auth = self.headers.get("Authorization", "")
         if not auth.startswith("Basic "):
             return False
-        return auth[6:] == _CRED_B64
+        # Constant-time comparison to avoid leaking the credential via timing.
+        return hmac.compare_digest(auth[6:], _CRED_B64)
 
     def _send_json(self, code: int, body: dict):
         data = json.dumps(body, indent=2).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", len(data))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Origin", os.environ.get("CLI_PROXY_CORS_ORIGIN", "null"))
         self.end_headers()
         self.wfile.write(data)
 
@@ -123,12 +133,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Origin", os.environ.get("CLI_PROXY_CORS_ORIGIN", "null"))
         self.send_header("Access-Control-Allow-Headers", "Authorization")
         self.end_headers()
 
 
 if __name__ == "__main__":
-    server = HTTPServer(("0.0.0.0", PORT), ProxyHandler)
-    print(f"cli_proxy listening on :{PORT}  hostname={HOSTNAME}", flush=True)
+    server = HTTPServer((HOST, PORT), ProxyHandler)  # nosec B104 — HOST defaults to loopback
+    print(f"cli_proxy listening on {HOST}:{PORT}  hostname={HOSTNAME}", flush=True)
     server.serve_forever()

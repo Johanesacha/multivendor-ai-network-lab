@@ -13,10 +13,14 @@ import os
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_AUDIT_DIR = os.path.normpath(os.path.join(_HERE, "../../audit"))
+# src/gait_audit.py lives one level below the repo root, so parents[1] is the repo
+# root. Previous "../../audit" resolved ABOVE the repo and silently wrote the audit
+# log outside the project. Anchor on the repo root (override via MVLAB_REPO_ROOT).
+_REPO_ROOT = Path(os.environ.get("MVLAB_REPO_ROOT") or Path(__file__).resolve().parents[1])
+_AUDIT_DIR = str(_REPO_ROOT / "audit")
 _LOCK = threading.Lock()
 
 

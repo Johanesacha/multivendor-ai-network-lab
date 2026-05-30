@@ -42,6 +42,7 @@ import urllib.parse
 from dotenv import load_dotenv
 load_dotenv()
 import csv
+import hmac
 import json
 import math
 import re
@@ -49,6 +50,7 @@ import shutil
 import subprocess
 import threading
 import time
+from pathlib import Path
 # Prefer defusedxml (safe against XXE / billion-laughs); fall back to stdlib
 # so existing checkouts without the dependency don't break. The .drawio files
 # we parse are operator-authored local files, but defusedxml is the right
@@ -65,7 +67,63 @@ import requests as _requests
 from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
 
 app = Flask(__name__)
-CORS(app)
+
+# ── Repo-root anchor ──────────────────────────────────────────────────────────
+# Single source of truth for resolving in-repo assets (inventory, demo, network-lab,
+# audit log) independent of the caller's CWD. src/app.py lives one level below the
+# repo root, so parents[1] is the repo root. Override with MVLAB_REPO_ROOT only for
+# unusual deployment layouts.
+REPO_ROOT = Path(os.environ.get("MVLAB_REPO_ROOT") or Path(__file__).resolve().parents[1])
+
+# ── CORS — scope to the dashboard origin(s), never '*' ────────────────────────
+# The dashboard is served same-origin by this app, so CORS is only needed for the
+# localhost dev origins. Override with a comma-separated MVLAB_CORS_ORIGINS list.
+_CORS_ORIGINS = [
+    o.strip() for o in os.environ.get(
+        "MVLAB_CORS_ORIGINS",
+        "http://localhost:5757,http://127.0.0.1:5757",
+    ).split(",") if o.strip()
+]
+CORS(app, resources={r"/api/*": {"origins": _CORS_ORIGINS}})
+
+# ── API auth (shared secret) ──────────────────────────────────────────────────
+# Privileged / mutating endpoints can execute network operations and shell-backed
+# remediation/chaos actions, so they MUST require an X-API-Key header that matches
+# the MVLAB_API_KEY env var (compared with hmac.compare_digest to avoid timing
+# leaks). Fail-closed: if MVLAB_API_KEY is unset, protected routes return 503 —
+# never allow-by-default. Read-only GET status endpoints stay open for the
+# dashboard (which is itself served same-origin from this app).
+MVLAB_API_KEY = os.environ.get("MVLAB_API_KEY", "")
+# Mutating HTTP methods always require auth. GET/HEAD/OPTIONS stay open unless the
+# path is explicitly listed below (e.g. a GET that triggers a privileged action).
+_PRIVILEGED_GET_PREFIXES: tuple[str, ...] = ()
+
+
+def _is_protected_request() -> bool:
+    """True if the current request must present a valid API key."""
+    method = request.method.upper()
+    if method in ("GET", "HEAD", "OPTIONS"):
+        return any(request.path.startswith(p) for p in _PRIVILEGED_GET_PREFIXES)
+    # POST/PUT/PATCH/DELETE — every mutating call is privileged.
+    return True
+
+
+@app.before_request
+def _require_api_key():
+    """Gate privileged/mutating endpoints behind the MVLAB_API_KEY shared secret."""
+    if not _is_protected_request():
+        return None
+    if not MVLAB_API_KEY:
+        # Fail closed — no key configured means no privileged access at all.
+        return jsonify({
+            "error": "server not configured for privileged operations",
+            "detail": "Set the MVLAB_API_KEY env var to enable mutating endpoints.",
+        }), 503
+    supplied = request.headers.get("X-API-Key", "")
+    if not supplied or not hmac.compare_digest(supplied, MVLAB_API_KEY):
+        return jsonify({"error": "unauthorized", "detail": "Missing or invalid X-API-Key."}), 403
+    return None
+
 
 # ── NAPALM Integration ────────────────────────────────────────────────────────
 try:
@@ -93,15 +151,9 @@ SSH_KEY_PATH = os.environ.get("DCN_SSH_KEY",     os.path.expanduser("~/Downloads
 SSH_USER     = os.environ.get("DCN_SSH_USER",    "netadmin1" if SSH_MODE == "pkcs11" else "netadmin")
 SSH_TIMEOUT  = int(os.environ.get("DCN_SSH_TIMEOUT", "30"))
 # FRR lab SSH — always key-based with lab_key, independent of production SSH mode.
-# Resolve relative to src/ layout (../../../) OR flat layout (../../) OR env override.
+# Resolve relative to REPO_ROOT (repo-root/network-lab/ssh-keys/lab_key) or env override.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_FRR_SSH_KEY = os.environ.get("DCN_FRR_SSH_KEY") or next(
-    (p for p in (
-        os.path.normpath(os.path.join(_HERE, "../../../network-lab/ssh-keys/lab_key")),
-        os.path.normpath(os.path.join(_HERE, "../../network-lab/ssh-keys/lab_key")),
-    ) if os.path.exists(p)),
-    os.path.normpath(os.path.join(_HERE, "../../network-lab/ssh-keys/lab_key"))
-)
+_FRR_SSH_KEY = os.environ.get("DCN_FRR_SSH_KEY") or str(REPO_ROOT / "network-lab" / "ssh-keys" / "lab_key")
 _FRR_SSH_USER = "root"
 # PKCS#11 config (YubiKey)
 PKCS11_LIB   = os.environ.get("DCN_PKCS11_LIB",  "/usr/local/lib/libykcs11.dylib")
@@ -434,6 +486,14 @@ def detect_role(hostname):
     return "unknown"
 
 DEVICES = load_devices()
+if not DEVICES:
+    # Optional CSV inventory sources (SecureCRT / NetBox) produced nothing. This is
+    # expected in a clean public checkout — the always-present FRR lab devices are
+    # prepended below — but surface it so a real inventory misconfiguration is visible.
+    import sys as _sys
+    print("[startup] No devices from CSV inventory sources — relying on built-in FRR "
+          "lab devices only (set DCN_SECURECRT_CSV / DCN_NETBOX_CSV to add real inventory).",
+          file=_sys.stderr)
 
 # ── FRR Docker Lab Devices (10 containers, always present) ───────────────────
 _FRR_LAB_DEVICES = [
@@ -1063,7 +1123,7 @@ def run_commands_on_device(ip, dtype, commands):
 
 # ── Static File Serving ────────────────────────────────────────────────────────
 _STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
-_DEMO_DIR   = os.path.normpath(os.path.join(_STATIC_DIR, "../../demo"))
+_DEMO_DIR   = str(REPO_ROOT / "demo")
 
 @app.route("/")
 def serve_index():
@@ -13084,18 +13144,9 @@ def api_telemetry_metrics():
 # ── 🔧 ROADMAP FEATURE 1: AUTO-REMEDIATION RUNBOOKS ──────────────────────────
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Resolve the sim script — try the DCN_Network_Tool-local path first
-# (src/../network-lab/...) and fall back to the workspace-root copy
-# (../../../network-lab/...) so the endpoint works in either layout.
+# Resolve the sim script relative to REPO_ROOT (repo-root/network-lab/...).
 def _find_sim_script() -> str:
-    here = os.path.dirname(__file__)
-    for rel in ("../network-lab/sim_bgp_failure.sh",
-                "../../network-lab/sim_bgp_failure.sh",
-                "../../../network-lab/sim_bgp_failure.sh"):
-        p = os.path.normpath(os.path.join(here, rel))
-        if os.path.exists(p):
-            return p
-    return os.path.normpath(os.path.join(here, "../network-lab/sim_bgp_failure.sh"))
+    return str(REPO_ROOT / "network-lab" / "sim_bgp_failure.sh")
 
 _SIM_SCRIPT = _find_sim_script()
 
@@ -15004,9 +15055,7 @@ def api_agent_log():
 # ── 🐒 BGP CHAOS MONKEY (Lab — stress-test auto-remediation) ─────────────────
 # ══════════════════════════════════════════════════════════════════════════════
 
-_CHAOS_SCRIPT = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                 "../../network-lab/sim_bgp_failure.sh"))
+_CHAOS_SCRIPT = str(REPO_ROOT / "network-lab" / "sim_bgp_failure.sh")
 
 
 def _clab_chaos(action: str, target: str | None) -> dict:
@@ -15213,17 +15262,9 @@ def api_shadow_audit():
         "uk-lon-dist-01": "configs/sw2/frr.conf",
         "de-fra-dist-01": "configs/sw5/frr.conf",
     }
-    # network-lab/ is at the repo root, 3 levels up from this file:
-    # /04_Scripts_Tools/DCN_Network_Tool/src/app.py → ../../../network-lab.
-    # Previous version used ../../network-lab which doesn't exist — every
-    # device reported "Could not read running config". Try multiple levels.
-    _here = os.path.dirname(os.path.abspath(__file__))
-    _LAB_DIR = None
-    for _rel in ("../../network-lab", "../../../network-lab", "../network-lab"):
-        _candidate = os.path.normpath(os.path.join(_here, _rel))
-        if os.path.isdir(_candidate):
-            _LAB_DIR = _candidate
-            break
+    # network-lab/ lives at the repo root (REPO_ROOT/network-lab).
+    _candidate = REPO_ROOT / "network-lab"
+    _LAB_DIR = str(_candidate) if _candidate.is_dir() else None
 
     def _read_running_config(hostname: str) -> str:
         """Resolve a device's running config from the strongest source first:
@@ -15325,8 +15366,35 @@ except ImportError as _mv_err:
     _MV_ENABLED = False
 
 
+def _startup_self_check() -> None:
+    """Log the resolution status of critical in-repo paths and the security posture
+    so a missing inventory/script/key or a wide-open bind is visible in service logs
+    rather than failing silently deep inside a request handler."""
+    import sys
+    print(f"REPO_ROOT resolved to: {REPO_ROOT}")
+    critical = {
+        "FRR SSH key":   _FRR_SSH_KEY,
+        "demo dir":      _DEMO_DIR,
+        "sim script":    _SIM_SCRIPT,
+        "network-lab":   str(REPO_ROOT / "network-lab"),
+    }
+    for label, path in critical.items():
+        status = "OK" if os.path.exists(path) else "MISSING"
+        line = f"[startup] {label}: {status} ({path})"
+        print(line, file=sys.stderr if status == "MISSING" else sys.stdout)
+    if not MVLAB_API_KEY:
+        print(
+            "[WARNING] MVLAB_API_KEY is unset — all privileged/mutating endpoints "
+            "are FAIL-CLOSED (HTTP 503). Set MVLAB_API_KEY to enable them.",
+            file=sys.stderr,
+        )
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("DCN_PORT", "5757"))
+    # Bind to loopback by default; require an explicit MVLAB_HOST=0.0.0.0 to expose
+    # the privileged API on all interfaces.
+    host = os.environ.get("MVLAB_HOST", "127.0.0.1")
     print(f"DCN Network Tool starting — {len(DEVICES)} devices loaded")
     print(f"SSH Key: {SSH_KEY_PATH}")
     print(f"LLM: {'enabled' if LLM_ENABLED else 'disabled'} — model={LLM_MODEL} ollama={OLLAMA_URL} fallback={MODEL_RUNNER_URL}")
@@ -15337,7 +15405,13 @@ if __name__ == "__main__":
     else:
         print("JMCP: disabled (set JMCP_ENABLED=true to enable)")
     print(f"NAPALM: {'available' if NAPALM_AVAILABLE else 'NOT installed'} — {sum(len(d) for d in NAPALM_SITES.values())} devices in {len(NAPALM_SITES)} sites")
+    _startup_self_check()
+    if host == "0.0.0.0":  # nosec B104 — explicit, opt-in exposure via MVLAB_HOST
+        import sys
+        print(f"[WARNING] Binding to {host}:{port} — privileged API exposed on all "
+              f"interfaces. Ensure MVLAB_API_KEY is set and network access is controlled.",
+              file=sys.stderr)
     # Start multivendor background services
     if _MV_ENABLED:
         init_mv_services()
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host=host, port=port, debug=False)
