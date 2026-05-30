@@ -289,6 +289,21 @@ class TestSendFallback:
         assert "*markdown*" in upd.effective_message.replies
 
 
+class TestLoggingHygiene:
+    """The bot token must never be written to logs — httpx logs request URLs
+    that embed it at INFO level."""
+
+    def test_silence_token_logging_raises_noisy_levels(self):
+        import logging
+        from telegram_bot.bot import _silence_token_logging
+
+        logging.getLogger("httpx").setLevel(logging.INFO)
+        logging.getLogger("httpcore").setLevel(logging.INFO)
+        _silence_token_logging()
+        assert logging.getLogger("httpx").level == logging.WARNING
+        assert logging.getLogger("httpcore").level == logging.WARNING
+
+
 class TestAuditLogRedaction:
     """Sourcery re-review #3: the audit log keeps the command but not the full
     (possibly sensitive) /ask prompt."""

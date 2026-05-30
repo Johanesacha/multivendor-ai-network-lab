@@ -229,11 +229,19 @@ class ChatOpsBot:
                 pass
 
 
+def _silence_token_logging() -> None:
+    """Stop httpx/httpcore from logging request URLs at INFO — those URLs embed
+    the bot token (``.../bot<TOKEN>/getUpdates``), which must never hit a log file."""
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    _silence_token_logging()
     config = BotConfig.from_env()
     if not config.allowed_chat_ids:
         log.warning(
