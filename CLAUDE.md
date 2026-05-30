@@ -58,6 +58,15 @@ LAN, change `--bind 127.0.0.1` to `0.0.0.0` in `start_portal.sh`.
 Portal sections: Overview · Topology · Diagrams (6 Mermaid: L1/L3/BGP/EVPN/Logical/DCN) ·
 Live Map · Configurations · Connectivity · Driver Layer · Operations · Documentation.
 
+### Sibling launchd agents (added 2026-05-29)
+
+The tool's web surfaces also run under launchd now, same `RunAtLoad`+`KeepAlive` policy:
+`com.geshlab.dcn-app` (API **:5757**, runs `src/app.py` with `venv_lab`) and
+`com.geshlab.demo-ui` (static demo UI **:8080**, serves `demo/`). The one-command manual
+launcher `network-lab/start_lab_tool.sh` does the same thing interactively (it also ensures
+the lab containers + demo UI). Full cross-app agent table + gotchas live in the workspace
+root `CLAUDE.md` → "launchd persistence" section.
+
 ---
 
 ## Driver Abstraction Layer (`src/drivers/`)
