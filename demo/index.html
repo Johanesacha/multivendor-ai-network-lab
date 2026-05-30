@@ -3076,6 +3076,29 @@ body.noc-wall .icon-rail{display:none}
 </div>
 
 <script>
+/* ── API key injection ──────────────────────────────────────────────────────
+ * Mutating /api/* endpoints require an X-API-Key header (DCN_API_KEY on the
+ * server). Store the key once in the browser console:
+ *   localStorage.setItem('DCN_API_KEY', '<your-key>')
+ * This wrapper attaches it automatically to every same-origin /api fetch so
+ * the dashboard keeps working without per-call changes. Non-API calls and
+ * requests with no key stored are passed through unchanged.
+ */
+(function attachApiKey() {
+  const _nativeFetch = window.fetch.bind(window);
+  window.fetch = function(input, init) {
+    init = init || {};
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const key = (function() { try { return localStorage.getItem('DCN_API_KEY'); } catch(e) { return null; } })();
+    if (key && url.indexOf('/api/') !== -1) {
+      const headers = new Headers(init.headers || (typeof input !== 'string' && input && input.headers) || {});
+      if (!headers.has('X-API-Key')) { headers.set('X-API-Key', key); }
+      init = Object.assign({}, init, { headers: headers });
+    }
+    return _nativeFetch(input, init);
+  };
+})();
+
 /* ── Live API config ────────────────────────────────────────── */
 const API = 'http://localhost:5757';
 let LIVE = false;

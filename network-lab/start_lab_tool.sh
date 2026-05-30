@@ -51,6 +51,14 @@ echo "  Flask API: http://localhost:$DCN_PORT"
 echo "  Demo UI  : http://localhost:8080/"
 echo "═══════════════════════════════════════════════════"
 
+# Security: bind to loopback by default; set DCN_HOST=0.0.0.0 only to
+# deliberately expose the API on all interfaces (requires DCN_API_KEY).
+export DCN_HOST="${DCN_HOST:-127.0.0.1}"
+if [ "${DCN_HOST}" = "0.0.0.0" ]; then
+  echo "[WARNING] DCN_HOST=0.0.0.0 — API will be exposed on all interfaces." >&2
+  echo "[WARNING] Ensure DCN_API_KEY is set before proceeding." >&2
+fi
+
 cd "$APP_DIR"
 source venv_lab/bin/activate
-python3 app.py
+python3 src/app.py
