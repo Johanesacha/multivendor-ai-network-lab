@@ -15038,10 +15038,13 @@ def api_agent_stream():
             except _QueueEmpty:
                 yield 'data: {"step":"heartbeat","level":"ping"}\n\n'
 
+    _req_origin = request.headers.get("Origin", "")
+    _allow_origin = _req_origin if _req_origin in _CORS_ORIGINS else _CORS_ORIGINS[0]
+
     return app.response_class(
         gen(), mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
-                 "Access-Control-Allow-Origin": "*"})
+                 "Access-Control-Allow-Origin": _allow_origin})
 
 
 @app.route("/api/agent/log", methods=["GET"])
