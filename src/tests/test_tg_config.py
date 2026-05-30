@@ -1,0 +1,77 @@
+"""
+test_tg_config.py — immutable env-driven configuration for the ChatOps bot.
+
+Config is the boundary where misconfiguration must fail loudly (no token => no
+bot) and where the security-relevant allowlist is parsed.
+"""
+
+import pytest
+
+from telegram_bot.config import BotConfig
+
+
+def test_from_env_minimal_parses_token_and_allowlist():
+    cfg = BotConfig.from_env(
+        {"TELEGRAM_BOT_TOKEN": "abc:123", "TELEGRAM_ALLOWED_CHAT_IDS": "1,2"}
+    )
+    assert cfg.token == "abc:123"
+    assert cfg.allowed_chat_ids == frozenset({1, 2})
+    assert cfg.dcn_api_url == "http://localhost:5757"  # default
+
+
+def test_token_is_required():
+    with pytest.raises(ValueError):
+        BotConfig.from_env({})
+
+
+def test_trailing_slash_stripped_from_api_url():
+    cfg = BotConfig.from_env(
+        {"TELEGRAM_BOT_TOKEN": "t", "DCN_API_URL": "http://x:5757/"}
+    )
+    assert cfg.dcn_api_url == "http://x:5757"
+
+
+def test_admins_and_rate_limit_parsed():
+    cfg = BotConfig.from_env(
+        {
+            "TELEGRAM_BOT_TOKEN": "t",
+            "TELEGRAM_ADMIN_CHAT_IDS": "9",
+            "TELEGRAM_RATE_LIMIT_PER_MIN": "5",
+        }
+    )
+    assert cfg.admin_chat_ids == frozenset({9})
+    assert cfg.rate_limit_per_min == 5
+
+
+def test_config_is_immutable():
+    cfg = BotConfig.from_env({"TELEGRAM_BOT_TOKEN": "t"})
+    with pytest.raises(Exception):
+        cfg.token = "tampered"  # frozen dataclass -> FrozenInstanceError
+
+
+def test_timeouts_parsed():
+    """Sourcery #7: request/ask timeout env vars are parsed as floats."""
+    cfg = BotConfig.from_env(
+        {
+            "TELEGRAM_BOT_TOKEN": "t",
+            "TELEGRAM_REQUEST_TIMEOUT": "12",
+            "TELEGRAM_ASK_TIMEOUT": "34",
+        }
+    )
+    assert cfg.request_timeout == 12.0
+    assert cfg.ask_timeout == 34.0
+
+
+def test_timeout_defaults():
+    cfg = BotConfig.from_env({"TELEGRAM_BOT_TOKEN": "t"})
+    assert cfg.request_timeout == 30.0
+    assert cfg.ask_timeout == 120.0
+
+
+def test_report_timeout_parsed_and_default():
+    """Sourcery re-review #2: the long-running report/incident timeout is configurable."""
+    cfg = BotConfig.from_env(
+        {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_REPORT_TIMEOUT": "45"}
+    )
+    assert cfg.report_timeout == 45.0
+    assert BotConfig.from_env({"TELEGRAM_BOT_TOKEN": "t"}).report_timeout == 300.0
