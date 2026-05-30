@@ -8204,9 +8204,33 @@ def _clean_llm_response(text):
 
 
 def _llm_query_claude(system_prompt, user_prompt, max_tokens=500):
-    """Direct call to Anthropic Claude. Returns cleaned text or None."""
+    """Direct call to Anthropic Claude. Prefers the official `anthropic` SDK
+    (typed errors + built-in retries, consistent with the orchestrator's
+    _call_claude); falls back to a raw HTTP POST so the path still works if the
+    SDK isn't installed. Returns cleaned text or None."""
     if not ANTHROPIC_API_KEY:
         return None
+
+    # Preferred path: official anthropic SDK.
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        resp = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        text = "".join(getattr(b, "text", "") for b in resp.content).strip()
+        if text:
+            return _clean_llm_response(text)
+        return None
+    except ImportError:
+        pass  # SDK not installed — fall through to raw HTTP
+    except Exception:
+        pass  # SDK call failed — fall through to raw HTTP
+
+    # Fallback path: raw HTTP (no SDK dependency).
     try:
         r = _requests.post(
             "https://api.anthropic.com/v1/messages",
@@ -15323,6 +15347,22 @@ try:
 except ImportError as _mv_err:
     print(f"[MV] Multivendor extensions not available: {_mv_err}")
     _MV_ENABLED = False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ── AEGIS preflight blueprints (twin write-endpoints + pipeline run) ──────────
+#    twin endpoints operate ONLY on throwaway `clab-twin-…` containers, never prod.
+# ══════════════════════════════════════════════════════════════════════════════
+try:
+    from preflight_twin import make_blueprint as _preflight_twin_bp
+    from preflight_run import make_blueprint as _preflight_run_bp
+    app.register_blueprint(_preflight_twin_bp())
+    app.register_blueprint(_preflight_run_bp())
+    print("[AEGIS] Preflight registered — /api/preflight/twin/* + /api/preflight/run active")
+    _AEGIS_ENABLED = True
+except Exception as _aegis_err:  # noqa: BLE001 — never block app boot on AEGIS
+    print(f"[AEGIS] Preflight not available: {_aegis_err}")
+    _AEGIS_ENABLED = False
 
 
 if __name__ == "__main__":
