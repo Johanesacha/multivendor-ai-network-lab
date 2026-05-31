@@ -94,6 +94,21 @@ class TestRateLimiter:
         assert rl.allow(2) is True  # different chat is unaffected
         assert rl.allow(1) is False
 
+    def test_window_boundary_is_inclusive_eviction(self):
+        """Ultrareview #8: pins the eviction predicate `bucket[0] <= cutoff`.
+
+        A hit at exactly window_seconds ago is evicted (next call allowed); just
+        shy of the boundary it still counts (blocked). Catches a silent off-by-one
+        flip from `<=` to `<`. max=1 makes each result a pure function of eviction."""
+        clock = [1000.0]
+        rl = RateLimiter(1, 60, clock=lambda: clock[0])
+        assert rl.allow(7) is True       # records hit at t=1000
+        assert rl.allow(7) is False      # at limit within the window
+        clock[0] = 1000.0 + 59.999       # just inside the window
+        assert rl.allow(7) is False      # prior hit still counts
+        clock[0] = 1000.0 + 60.0         # exactly window_seconds after the hit
+        assert rl.allow(7) is True       # prior hit evicted (cutoff inclusive)
+
 
 class TestRateLimiterMisconfiguration:
     """Sourcery #2: a non-positive limit must not silently block everyone.

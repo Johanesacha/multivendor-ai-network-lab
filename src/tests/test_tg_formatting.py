@@ -7,6 +7,8 @@ Pure functions that turn DCN API payloads into Telegram-safe text. They must:
   - degrade to a readable generic render for endpoints whose schema we don't pin.
 """
 
+import pytest
+
 from telegram_bot.formatting import (
     TELEGRAM_MAX,
     truncate,
@@ -37,8 +39,17 @@ class TestFormatHealth:
         out = format_health(
             {"status": "ok", "devices_loaded": 10, "timestamp": "2026-05-29T11:00:00"}
         )
+        assert out.startswith("✅")  # ok branch of the icon selector
         assert "ok" in out.lower()
         assert "10" in out
+
+    def test_degraded_status_shows_warning_icon(self):
+        """Ultrareview #10: a non-ok status renders ⚠️, not ✅ — an on-call engineer
+        must not see a green check on a degraded fabric."""
+        out = format_health({"status": "degraded", "devices_loaded": 5})
+        assert out.startswith("⚠️")
+        assert "✅" not in out
+        assert "degraded" in out
 
     def test_missing_fields_safe(self):
         out = format_health({})
@@ -79,6 +90,13 @@ class TestFormatDevices:
         out = format_devices({"devices": self.SAMPLE})
         assert "de-fra-core-01" in out
 
+    def test_bare_string_devices(self):
+        """Ultrareview #11: non-dict list elements render via the `• {dev}` else
+        branch — pin the bullet so an accidental removal is caught."""
+        out = format_devices(["router-a", "router-b"])
+        assert "• router-a" in out and "• router-b" in out
+        assert "Devices (2)" in out
+
 
 class TestFormatAsk:
     def test_prefers_rendered_field(self):
@@ -90,6 +108,21 @@ class TestFormatAsk:
 
     def test_error_payload(self):
         assert "prompt required" in format_ask({"error": "prompt required"})
+
+    def test_first_priority_key_wins_over_lower(self):
+        """Ultrareview #9: 'rendered' outranks 'output' even when both are present
+        — pins the ordered-tuple semantics against an accidental reorder."""
+        out = format_ask({"output": "second", "rendered": "first"})
+        assert "first" in out
+        assert "second" not in out
+
+    @pytest.mark.parametrize("key", ["answer", "result", "summary"])
+    def test_lower_priority_keys_used_when_alone(self, key):
+        assert "lonely value" in format_ask({key: "lonely value"})
+
+    def test_unrecognized_dict_falls_back_to_json_dump(self):
+        out = format_ask({"unknown_field": 42})
+        assert "unknown_field" in out and "42" in out
 
 
 class TestFormatReport:

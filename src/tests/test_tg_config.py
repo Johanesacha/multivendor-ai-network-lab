@@ -75,3 +75,34 @@ def test_report_timeout_parsed_and_default():
     )
     assert cfg.report_timeout == 45.0
     assert BotConfig.from_env({"TELEGRAM_BOT_TOKEN": "t"}).report_timeout == 300.0
+
+
+def test_dcn_api_key_parsed_and_default():
+    """Ultrareview #12: the X-API-Key for the DCN API's mutating endpoints is read
+    from MVLAB_API_KEY (whitespace-stripped) and defaults to empty when absent.
+    Pins the env-var name so an operator following .env.example actually gets a key."""
+    cfg = BotConfig.from_env({"TELEGRAM_BOT_TOKEN": "t", "MVLAB_API_KEY": "  mykey  "})
+    assert cfg.dcn_api_key == "mykey"
+    assert BotConfig.from_env({"TELEGRAM_BOT_TOKEN": "t"}).dcn_api_key == ""
+
+
+def test_bad_numeric_env_names_the_offending_variable():
+    """Ultrareview #1: a malformed numeric var fails loudly, naming the variable
+    (not just an opaque 'invalid literal for int()')."""
+    with pytest.raises(ValueError, match="TELEGRAM_RATE_LIMIT_PER_MIN"):
+        BotConfig.from_env(
+            {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_RATE_LIMIT_PER_MIN": "twenty"}
+        )
+    with pytest.raises(ValueError, match="TELEGRAM_ASK_TIMEOUT"):
+        BotConfig.from_env({"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_ASK_TIMEOUT": "30s"})
+
+
+def test_secrets_excluded_from_repr():
+    """Ultrareview #5: token and dcn_api_key must never appear in repr(), so they
+    can't leak via a traceback or a locals-dumping error reporter."""
+    cfg = BotConfig.from_env(
+        {"TELEGRAM_BOT_TOKEN": "123456:SECRET-TOKEN", "MVLAB_API_KEY": "supersecretkey"}
+    )
+    text = repr(cfg)
+    assert "SECRET-TOKEN" not in text
+    assert "supersecretkey" not in text

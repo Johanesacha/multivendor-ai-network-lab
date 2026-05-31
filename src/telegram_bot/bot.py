@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import re
 from typing import Awaitable, Callable
 
 import httpx
@@ -35,6 +36,18 @@ from . import formatting as fmt
 log = logging.getLogger("dcn.telegram")
 
 Handler = Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
+
+# Decorative Markdown the formatters inject; stripped for the plain-text fallback
+# when Telegram rejects the entities. We strip ``*`` (bold), backtick code spans
+# and ``` fences only — never ``_`` or brackets, which appear in real device
+# hostnames (de_fra_core_01) and JSON keys we must keep readable.
+_MD_FENCE = re.compile(r"```")
+_MD_DECORATION = re.compile(r"[*`]")
+
+
+def _to_plain(text: str) -> str:
+    """Strip injected Markdown decoration so the plain-text fallback reads cleanly."""
+    return _MD_DECORATION.sub("", _MD_FENCE.sub("", text))
 
 _HELP = (
     "🛰️ *DCN ChatOps*\n"
@@ -144,7 +157,7 @@ class ChatOpsBot:
         try:
             await msg.reply_text(text, parse_mode=ParseMode.MARKDOWN)
         except BadRequest:
-            await msg.reply_text(text)
+            await msg.reply_text(_to_plain(text))
 
     # ── command handlers ───────────────────────────────────────────────────────
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -203,7 +216,7 @@ class ChatOpsBot:
         try:
             await placeholder.edit_text(text, parse_mode=ParseMode.MARKDOWN)
         except BadRequest:
-            await placeholder.edit_text(text)
+            await placeholder.edit_text(_to_plain(text))
 
     async def _run(
         self,
@@ -231,10 +244,12 @@ class ChatOpsBot:
 
 
 def _silence_token_logging() -> None:
-    """Stop httpx/httpcore from logging request URLs at INFO — those URLs embed
-    the bot token (``.../bot<TOKEN>/getUpdates``), which must never hit a log file."""
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    """Keep the bot token out of logs. httpx logs the request URL
+    (``.../bot<TOKEN>/getUpdates``) at INFO, and telegram.Bot logs its
+    token-bearing base URL at DEBUG — neither must reach a log file, even if a
+    developer raises the root level to DEBUG for troubleshooting."""
+    for name in ("httpx", "httpcore", "telegram"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def main() -> None:
