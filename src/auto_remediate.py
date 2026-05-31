@@ -279,6 +279,11 @@ class AutoRemediator:
             rec = self._actions.get(action_id)
         if not rec:
             return {"error": "action_id not found"}
+        # Audit-integrity guard: decline only CANCELS a run still awaiting a verdict.
+        # Mirrors approve()'s status check — never let a decline rewrite the status of
+        # an already-executed / paged / declined / injection-rejected record.
+        if rec["status"] not in ("pending_approval", "needs_enrichment", "pending"):
+            return {"error": f"not declinable (status={rec['status']})"}
         rec["status"] = "declined"
         rec["decline_reason"] = reason
         self.deps.gait_log({"actor": actor, "verdict": "declined",
@@ -363,7 +368,10 @@ def make_blueprint(remediator: AutoRemediator, enable_simulate: Optional[bool] =
     @bp.route("/api/auto-remediate/decline/<action_id>", methods=["POST"])
     def _decline(action_id):
         body = request.get_json(silent=True) or {}
-        return jsonify(remediator.decline(action_id, body.get("reason", "")))
+        # Treat the request body as untrusted: coerce the reason to a string and cap
+        # its length before it lands in the in-memory record + GAIT audit log + UI.
+        reason = str(body.get("reason", ""))[:500]
+        return jsonify(remediator.decline(action_id, reason))
 
     # debug/demo hook: inject a synthetic anomaly to drive an auto-fix without waiting.
     # OFF by default — it accepts an arbitrary anomaly body, so enable it explicitly with

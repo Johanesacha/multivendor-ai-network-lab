@@ -198,16 +198,191 @@ def test_simulate_gated_off_by_default():
     assert c.get("/api/auto-remediate/status").status_code == 200               # others still up
 
 
+# ── Phase 6 C: decline status-guard + reason cap (audit integrity) ───────────────
+def _make_pending(rem):
+    """Helper: drive one MEDIUM action to pending_approval and return its record."""
+    return rem.evaluate({"detector": "drift", "metric": "mtu", "device": "leaf1",
+                         "interface": "eth2", "expected": 9000})
+
+
+def test_decline_guard_rejects_executed_record():
+    """decline() must NOT overwrite a terminal status (audit-integrity guard).
+
+    Without the guard, declining an already auto_executed/LOW action would rewrite
+    its status to 'declined', falsifying the audit trail.
+    """
+    deps, calls, _ = make_deps(vendor="frr")
+    rem = ar.AutoRemediator(deps)
+    rec = rem.evaluate({"detector": "flap", "metric": "bgp_established",
+                        "device": "de-fra-core-01"})          # LOW -> auto_executed
+    assert rec["status"] == "auto_executed"
+    out = rem.decline(rec["id"], reason="too late")
+    assert "error" in out                                     # refused
+    assert "not declinable" in out["error"]
+    assert rem._actions[rec["id"]]["status"] == "auto_executed"  # status untouched
+    assert "decline_reason" not in rem._actions[rec["id"]]      # no audit overwrite
+
+
+def test_decline_guard_rejects_already_declined():
+    """Declining an already-declined record must be refused (idempotent guard)."""
+    deps, _, _ = make_deps(vendor="frr")
+    rem = ar.AutoRemediator(deps)
+    rec = _make_pending(rem)
+    first = rem.decline(rec["id"], reason="window")
+    assert first["status"] == "declined"
+    second = rem.decline(rec["id"], reason="again")
+    assert "error" in second and "not declinable" in second["error"]
+    assert rem._actions[rec["id"]]["decline_reason"] == "window"   # original reason kept
+
+
+def test_decline_pending_still_works():
+    """Regression: declining a pending_approval record must still cancel it."""
+    deps, calls, _ = make_deps(vendor="frr")
+    rem = ar.AutoRemediator(deps)
+    rec = _make_pending(rem)
+    out = rem.decline(rec["id"], reason="maintenance window")
+    assert out["status"] == "declined" and out["decline_reason"] == "maintenance window"
+    assert calls["closed_loop"] == [] and calls["exec"] == []      # never executed
+
+
+def test_decline_prevents_subsequent_execution():
+    """A declined run can never be approved/executed afterwards."""
+    deps, calls, _ = make_deps(vendor="frr")
+    rem = ar.AutoRemediator(deps)
+    rec = _make_pending(rem)
+    rem.decline(rec["id"], reason="not now")
+    out = rem.approve(rec["id"])
+    assert "error" in out and "not approvable" in out["error"]
+    assert calls["closed_loop"] == [] and calls["exec"] == []      # declined => never runs
+
+
+def test_decline_reason_capped_and_coerced_at_route():
+    """The decline route treats the body as untrusted: a non-string / over-long
+    reason is coerced to str and truncated to <=500 chars before it reaches the
+    record + audit log."""
+    from flask import Flask
+    deps, _, _ = make_deps(vendor="frr")
+    rem = ar.AutoRemediator(deps)
+    rec = _make_pending(rem)
+    app = Flask(__name__)
+    app.register_blueprint(ar.make_blueprint(rem, enable_simulate=False))
+    c = app.test_client()
+
+    # over-long reason -> truncated to 500 chars
+    long_reason = "x" * 2000
+    out = c.post(f"/api/auto-remediate/decline/{rec['id']}", json={"reason": long_reason}).get_json()
+    assert out["status"] == "declined"
+    assert len(out["decline_reason"]) == 500
+
+
+def test_decline_reason_non_string_coerced_at_route():
+    """A non-string reason (e.g. a number) is coerced to str, never passed raw."""
+    from flask import Flask
+    deps, _, _ = make_deps(vendor="frr")
+    rem = ar.AutoRemediator(deps)
+    rec = _make_pending(rem)
+    app = Flask(__name__)
+    app.register_blueprint(ar.make_blueprint(rem, enable_simulate=False))
+    c = app.test_client()
+    out = c.post(f"/api/auto-remediate/decline/{rec['id']}", json={"reason": 12345}).get_json()
+    assert out["status"] == "declined"
+    assert out["decline_reason"] == "12345"                # coerced, not the int
+
+
+# ── Phase 6 C: approve/decline behind the X-API-Key gate ─────────────────────────
+def _gated_app(rem):
+    """Build a Flask app whose before_request mirrors the real app.py X-API-Key
+    gate (MVLAB_API_KEY, fail-closed 503, hmac.compare_digest), wrapping the
+    auto-remediate blueprint exactly as the production app does."""
+    import hmac
+    from flask import Flask, jsonify, request
+    app = Flask(__name__)
+    key = os.environ.get("MVLAB_API_KEY", "")
+
+    @app.before_request
+    def _gate():
+        if request.method.upper() in ("GET", "HEAD", "OPTIONS"):
+            return None                                    # reads stay open
+        if not key:
+            return jsonify({"error": "server not configured"}), 503
+        supplied = request.headers.get("X-API-Key", "")
+        if not supplied or not hmac.compare_digest(supplied, key):
+            return jsonify({"error": "unauthorized"}), 403
+        return None
+
+    app.register_blueprint(ar.make_blueprint(rem, enable_simulate=False))
+    return app
+
+
+def test_approve_gate_rejects_missing_key(monkeypatch):
+    monkeypatch.setenv("MVLAB_API_KEY", "s3cret")
+    deps, calls, _ = make_deps(vendor="frr")
+    rem = ar.AutoRemediator(deps)
+    rec = _make_pending(rem)
+    c = _gated_app(rem).test_client()
+    # no X-API-Key header -> 403, and the action is NOT executed
+    resp = c.post(f"/api/auto-remediate/approve/{rec['id']}")
+    assert resp.status_code == 403
+    assert calls["closed_loop"] == [] and calls["exec"] == []
+    assert rem._actions[rec["id"]]["status"] == "pending_approval"   # unchanged
+
+
+def test_decline_gate_rejects_missing_key(monkeypatch):
+    monkeypatch.setenv("MVLAB_API_KEY", "s3cret")
+    deps, _, _ = make_deps(vendor="frr")
+    rem = ar.AutoRemediator(deps)
+    rec = _make_pending(rem)
+    c = _gated_app(rem).test_client()
+    resp = c.post(f"/api/auto-remediate/decline/{rec['id']}", json={"reason": "x"})
+    assert resp.status_code == 403
+    assert rem._actions[rec["id"]]["status"] == "pending_approval"   # not declined
+
+
+def test_approve_gate_allows_valid_key(monkeypatch):
+    monkeypatch.setenv("MVLAB_API_KEY", "s3cret")
+    deps, calls, _ = make_deps(vendor="frr")
+    rem = ar.AutoRemediator(deps)
+    rec = _make_pending(rem)
+    c = _gated_app(rem).test_client()
+    resp = c.post(f"/api/auto-remediate/approve/{rec['id']}", headers={"X-API-Key": "s3cret"})
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "auto_executed"
+    assert calls["closed_loop"][0]["hostname"] == "leaf1"            # executed via engine path
+
+
+def test_decline_gate_allows_valid_key(monkeypatch):
+    monkeypatch.setenv("MVLAB_API_KEY", "s3cret")
+    deps, calls, _ = make_deps(vendor="frr")
+    rem = ar.AutoRemediator(deps)
+    rec = _make_pending(rem)
+    c = _gated_app(rem).test_client()
+    resp = c.post(f"/api/auto-remediate/decline/{rec['id']}",
+                  json={"reason": "scheduled change freeze"},
+                  headers={"X-API-Key": "s3cret"})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["status"] == "declined" and body["decline_reason"] == "scheduled change freeze"
+    assert calls["closed_loop"] == [] and calls["exec"] == []        # decline never executes
+
+
 # ── standalone runner (no pytest needed) ─────────────────────────────────────────
 if __name__ == "__main__":
+    import inspect
+
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
-    passed = 0
+    passed = skipped = 0
     for fn in fns:
+        # Tests that take pytest fixtures (e.g. monkeypatch) can't run standalone.
+        if inspect.signature(fn).parameters:
+            print(f"  SKIP  {fn.__name__} (needs pytest fixtures)")
+            skipped += 1
+            continue
         try:
             fn()
             print(f"  PASS  {fn.__name__}")
             passed += 1
         except Exception as e:
             print(f"  FAIL  {fn.__name__}: {type(e).__name__}: {e}")
-    print(f"\n{passed}/{len(fns)} passed")
-    sys.exit(0 if passed == len(fns) else 1)
+    total = len(fns) - skipped
+    print(f"\n{passed}/{total} passed ({skipped} skipped)")
+    sys.exit(0 if passed == total else 1)

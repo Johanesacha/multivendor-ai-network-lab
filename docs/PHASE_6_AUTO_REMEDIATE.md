@@ -47,16 +47,23 @@ It **never demotes** below the floor.
 | GET | `/api/auto-remediate/runbook` | open | loaded catalog summary |
 | POST | `/api/auto-remediate/approve/<id>` | **X-API-Key** | approve a queued MED/HIGH action → execute |
 | POST | `/api/auto-remediate/decline/<id>` | **X-API-Key** | decline + GAIT reason |
-| POST | `/api/auto-remediate/simulate` | **X-API-Key** + `DCN_AUTO_REMEDIATE_SIMULATE=1` | inject a synthetic anomaly (debug/demo) — **OFF by default** |
+| POST | `/api/auto-remediate/simulate` | **X-API-Key** + `MVLAB_AUTO_REMEDIATE_SIMULATE=1` | inject a synthetic anomaly (debug/demo) — **OFF by default** |
 
-Mutating endpoints require the `X-API-Key` header (`DCN_API_KEY`), like the rest of `/api/*`.
+Mutating endpoints require the `X-API-Key` header. The Flask app gate reads the
+**`MVLAB_API_KEY`** env var (`src/app.py`), like the rest of `/api/*`. (The stdio MCP process
+uses a *separate* `DCN_API_KEY` env var — never cross-wire the two.)
 
 ## Security
 
 * **`simulate` is gated off by default.** It accepts an arbitrary anomaly body, so the
-  route is only registered when `DCN_AUTO_REMEDIATE_SIMULATE=1`, and it still sits behind
+  route is only registered when `MVLAB_AUTO_REMEDIATE_SIMULATE=1`, and it still sits behind
   the `X-API-Key` gate. Real operation never needs it — anomalies arrive from
   `/api/anomaly/detect`.
+* **Decline audit-integrity guard.** `decline()` now mirrors `approve()`'s status check and
+  only cancels a run still awaiting a verdict (`pending_approval` / `needs_enrichment` /
+  `pending`); any other status returns `{"error": "not declinable (status=…)"}` and the record
+  is left untouched. The decline route also coerces+caps the untrusted reason
+  (`str(body.get("reason",""))[:500]`).
 * **Placeholder injection guard.** Every `{placeholder}` value (`interface`, `peer_ip`,
   `asn`, `expected`, `host`, …) is strictly validated by `valid_field()` before substitution
   into any config/command payload — control characters, shell/config metacharacters, and
@@ -69,7 +76,7 @@ Endpoints are always registered; the polling loop is **off by default**. Turn it
 
 ```bash
 # in DCN_Network_Tool/.env  (or the launchd plist EnvironmentVariables)
-DCN_AUTO_REMEDIATE_S=300        # poll /api/anomaly/detect every 5 min
+MVLAB_AUTO_REMEDIATE_S=300      # poll /api/anomaly/detect every 5 min
 launchctl kickstart -k gui/$(id -u)/com.geshlab.dcn-app
 # boot log -> [AUTO-REMEDIATE] 6 endpoints + loop ON (every 300s)
 ```
@@ -77,7 +84,8 @@ launchctl kickstart -k gui/$(id -u)/com.geshlab.dcn-app
 ## Demo (no waiting)
 
 ```bash
-KEY=$(grep ^DCN_API_KEY= .env | cut -d= -f2-)
+KEY=$(grep ^MVLAB_API_KEY= .env | cut -d= -f2-)   # the Flask app gate reads MVLAB_API_KEY
+# requires the simulate route enabled: MVLAB_AUTO_REMEDIATE_SIMULATE=1
 # induce-style auto-fix via the simulate hook:
 curl -s -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
   -d '{"detector":"flap","metric":"bgp_established","device":"de-fra-core-01"}' \
@@ -96,9 +104,12 @@ curl -s -X POST -H "X-API-Key: $KEY" -H 'Content-Type: application/json' \
 - ✅ **A** auto-remediate engine + background loop
 - ✅ **B** 8-runbook catalog (`auto.yaml`)
 - ✅ **D** 6 API endpoints
-- ✅ Tests 14/14 · live smoke verified (gated 403, LOW auto_executed, lab healthy)
-- ⏳ **C** UI "Auto-Remediation Queue" tab (`demo/index.html`)
-- ⏳ **E** 5 MCP tools (`mv_auto_*` → 68 total)
+- ✅ Tests 34/34 (27 auto-remediate + 7 MCP smoke) · live smoke verified (gated 403, LOW auto_executed, lab healthy)
+- ✅ **C** UI "Auto-Remediation Queue" tab (`demo/index.html`, `data-tab=auto-remediate-queue`, `arq*` handlers)
+- ✅ **E** 5 MCP tools (`mv_auto_*` → **68 documented** total; 69 on disk incl. `mv_device_health`)
+
+> Full A–E write-up, security model, and API/MCP examples: [`PHASE6_AUTO_REMEDIATION.md`](PHASE6_AUTO_REMEDIATION.md).
+> Network-bind + secret-scan details: [`SECURITY_HARDENING.md`](SECURITY_HARDENING.md).
 
 ## Architecture note
 

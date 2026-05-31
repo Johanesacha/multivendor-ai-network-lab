@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
 MCP Server wrapper for DCN Network Tool.
-Exposes all 17 API endpoints as MCP tools for AI agent integration.
+Exposes the DCN / AI Network Tool API surface as MCP tools for AI agent
+integration — legacy network ops, multivendor lab collection, observability,
+closed-loop change, and the Phase 6 event-initiated auto-remediation queue.
 
 Usage:
     python mcp_dcn_server.py
@@ -39,7 +41,9 @@ mcp = FastMCP(
         "gNMI telemetry, intent verification, hop-by-hop path trace, CVE scanner, "
         "vendor-agnostic command translator, eval harness with 10 scenarios + LLM-as-judge, "
         "Pydantic-AI multi-agent orchestrator (Routing/ACL/Incident), auto-remediation "
-        "runbooks (BGP/OSPF/Interface/ACL), and immutable GAIT audit trail."
+        "runbooks (BGP/OSPF/Interface/ACL), immutable GAIT audit trail, and a Phase 6 "
+        "event-initiated auto-remediation queue (status/queue/runbooks plus approve/decline "
+        "of risk-tier-gated remediation actions)."
     ),
 )
 
@@ -502,6 +506,38 @@ def mv_shadow_audit(site: str = "all", check: str = "all") -> str:
 def mv_device_health(hostname: str) -> str:
     """Single-device operational snapshot — version, BGP, OSPF, interfaces, routes, memory, CPU — all in parallel via vendor-aware show commands. Works for FRR (vtysh), Arista cEOS (Cli), Nokia SR Linux (sr_cli), and Juniper (PyEZ). Typically completes in <2 s for the clab fabric."""
     return _get(f"/api/health/{hostname}")
+
+
+# ── Phase 6E: Event-Initiated Auto-Remediation ─────────────────────────────────
+
+@mcp.tool()
+def mv_auto_status() -> str:
+    """Auto-remediation engine status summary: tick count, last_tick_ts, runbooks_loaded (8), total_actions, by_status breakdown (pending_approval/auto_executed/needs_enrichment/paged/declined/rejected_invalid_field/execute_failed), and cooldown_min. Read-only; the engine evaluates anomalies against runbooks and gates execution by risk_tier (LOW auto-runs, MEDIUM/HIGH await approval, CRIT pages out)."""
+    return _get("/api/auto-remediate/status")
+
+
+@mcp.tool()
+def mv_auto_queue(limit: int = 50) -> str:
+    """List recent event-initiated auto-remediation actions (newest first, up to `limit`). Top-level key is 'actions'. Each action record: id (ar-<10hex>), ts (epoch seconds), host, vendor, runbook, anomaly_type, metric, severity, risk_tier (LOW|MEDIUM|HIGH|CRIT), action_type (config|exec|collect), payload, missing_fields, invalid_fields, status (pending_approval|auto_executed|needs_enrichment|paged|declined|rejected_invalid_field|execute_failed), result. pending_approval actions await mv_auto_approve / mv_auto_decline."""
+    return _get("/api/auto-remediate/queue", {"limit": str(limit)})
+
+
+@mcp.tool()
+def mv_auto_runbooks() -> str:
+    """List the 8 auto-remediation runbooks from auto.yaml: id, description, match criteria (anomaly_type / metric / supported vendors), risk_tier floor (LOW|MEDIUM|HIGH|CRIT), and action_type (config|exec|collect). Read-only catalog used by the engine to match anomalies to a remediation."""
+    return _get("/api/auto-remediate/runbook")
+
+
+@mcp.tool()
+def mv_auto_approve(action_id: str) -> str:
+    """Approve a queued auto-remediation action by id (ar-<10hex>), kicking the Health-Gated closed-loop / exec execution. Only actions in status pending_approval (MEDIUM/HIGH) or needs_enrichment (once missing_fields are resolved) are approvable; on success status flips to auto_executed or execute_failed. Returns the updated record, or {error: 'not approvable (status=...)'} / {error: 'cannot execute — unresolved fields', missing:[...]}. The actor is recorded server-side as 'mcp-approved'."""
+    return json.dumps(_post(f"/api/auto-remediate/approve/{action_id}", {}))
+
+
+@mcp.tool()
+def mv_auto_decline(action_id: str, reason: str = "") -> str:
+    """Decline a queued auto-remediation action by id (ar-<10hex>) with an optional reason. Marks status=declined, records decline_reason, and logs the verdict to the GAIT audit trail. Returns the updated record, or {error} if the id is unknown. Use to reject a pending_approval action the operator does not want executed."""
+    return json.dumps(_post(f"/api/auto-remediate/decline/{action_id}", {"reason": reason}))
 
 
 if __name__ == "__main__":

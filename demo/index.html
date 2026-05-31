@@ -1626,6 +1626,7 @@ body.noc-wall .icon-rail{display:none}
     <div class="tab" data-tab="change-approval" onclick="switchTab(this)">&#x2705; Change Approval</div>
     <div class="tab" data-tab="health-gate" onclick="switchTab(this)">&#x1F6E1;&#xFE0F; Health Gate</div>
     <div class="tab" data-tab="auto-remediate" onclick="switchTab(this)">&#x1F916; Auto-Remediate</div>
+    <div class="tab" data-tab="auto-remediate-queue" onclick="switchTab(this)">&#x1F916; Auto-Remediation Queue<span class="ntag">P6</span></div>
     <div class="tab" data-tab="compliance" onclick="switchTab(this)">&#x1F6E1;&#xFE0F; Compliance</div>
     <div class="tab" data-tab="cli-bench" onclick="switchTab(this)">&#x26A1; CLI Transport</div>
     <div class="tab" data-tab="observer" onclick="switchTab(this)">&#x1F504; Observer-Actor<span class="ntag">L7</span></div>
@@ -2249,6 +2250,56 @@ body.noc-wall .icon-rail{display:none}
             <b style="color:var(--green)">4.</b> Approved runbooks execute <i>through</i> Health Gate &mdash; confirmed-commit watch on the fix itself<br>
             <b style="color:var(--green)">5.</b> Auto-revert if the fix degrades signals<br><br>
             <b style="color:var(--accent)">Click Refresh queue or Propose for all current drift to start.</b>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phase 6 C: Event-Initiated Auto-Remediation Queue — anomaly → runbook → risk-gate → approve/decline -->
+    <!-- Distinct from the Day-5/6 "Auto-Remediate" tab above: this consumes /api/auto-remediate/* (action records), not /api/mv/remediation/* (proposals). -->
+    <div class="tp" id="tab-auto-remediate-queue">
+      <div style="display:flex;gap:8px;flex-shrink:0;align-items:center;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:700;color:var(--green)">&#x1F916; Auto-Remediation Queue<span class="ntag" style="margin-left:6px">P6</span></span>
+        <span class="tag-info" style="background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.3);color:var(--green)">anomaly &rarr; runbook &rarr; risk-tier gate &rarr; approve / decline</span>
+        <button class="btn p" id="arq-refresh-btn" onclick="arqRefresh()">&#x21BB; Refresh</button>
+        <div class="spacer"></div>
+        <span id="arq-stats" style="font-size:11px;color:var(--muted)">no actions yet</span>
+      </div>
+
+      <!-- status tiles bound to /api/auto-remediate/status by_status -->
+      <div class="card-row" style="flex-shrink:0;display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:8px">
+        <div class="stat-card" id="arq-tile-pending" style="border-left:3px solid #d29922">
+          <div class="sl">PENDING APPROVAL</div>
+          <div class="sv" id="arq-pending-count" style="font-size:22px">—</div>
+        </div>
+        <div class="stat-card" id="arq-tile-exec" style="border-left:3px solid var(--green)">
+          <div class="sl">AUTO-EXECUTED</div>
+          <div class="sv" id="arq-exec-count" style="font-size:22px">—</div>
+        </div>
+        <div class="stat-card" id="arq-tile-enrich" style="border-left:3px solid var(--accent)">
+          <div class="sl">NEEDS ENRICHMENT</div>
+          <div class="sv" id="arq-enrich-count" style="font-size:22px">—</div>
+        </div>
+        <div class="stat-card" id="arq-tile-declined" style="border-left:3px solid #f85149">
+          <div class="sl">DECLINED</div>
+          <div class="sv" id="arq-declined-count" style="font-size:22px">—</div>
+        </div>
+        <div class="stat-card" id="arq-tile-paged" style="border-left:3px solid #f85149">
+          <div class="sl">PAGED / REJECTED</div>
+          <div class="sv" id="arq-paged-count" style="font-size:22px">—</div>
+        </div>
+      </div>
+
+      <!-- action-record queue -->
+      <div class="scroll-area" id="arq-out">
+        <div style="color:var(--muted);text-align:center;padding:40px;font-size:12px">
+          <div style="font-size:36px;margin-bottom:10px">&#x1F916;</div>
+          <b style="color:var(--text)">Event-initiated remediation</b><br><br>
+          <div style="line-height:1.8;max-width:600px;margin:auto">
+            <b style="color:var(--green)">1.</b> A detected anomaly (ADTK / forecast) is matched to a runbook in <code>auto.yaml</code><br>
+            <b style="color:var(--green)">2.</b> The runbook&rsquo;s risk tier gates the action &mdash; <b style="color:var(--green)">LOW</b> auto-executes, <b style="color:#d29922">MEDIUM/HIGH</b> queue for approval, <b style="color:#f85149">CRIT</b> only pages<br>
+            <b style="color:var(--green)">3.</b> You <b style="color:var(--green)">Approve</b> a pending action (kicks the Health-Gated closed-loop) or <b style="color:#f85149">Decline</b> it (GAIT-logged)<br><br>
+            <b style="color:var(--accent)">Click Refresh to load the queue.</b> An empty queue means no anomalies have matched a runbook yet.
           </div>
         </div>
       </div>
@@ -6024,6 +6075,148 @@ window.arRefresh = arRefresh;
 window.arApprove = arApprove;
 window.arReject = arReject;
 window.arImportFromDrift = arImportFromDrift;
+
+/* ── Phase 6 C: Event-Initiated Auto-Remediation Queue ─────────
+   Distinct system from the Day-5/6 block above. Consumes:
+     GET  /api/auto-remediate/status            (by_status tiles)
+     GET  /api/auto-remediate/queue?limit=N     ({actions:[...]}, newest-first)
+     POST /api/auto-remediate/approve/<id>      (kick Health-Gated closed-loop)
+     POST /api/auto-remediate/decline/<id> {reason}
+   action-record status enum:
+     pending_approval · auto_executed · needs_enrichment · paged ·
+     declined · rejected_invalid_field · execute_failed
+   X-API-Key auto-injects via the attachApiKey() fetch wrapper (localStorage MVLAB_API_KEY);
+   ts is epoch SECONDS; there is NO get-single-action route — re-fetch /queue to refresh.
+*/
+const _ARQ_STATUS_COLORS = {
+  pending_approval:       '#d29922',
+  auto_executed:          'var(--green)',
+  needs_enrichment:       'var(--accent)',
+  declined:               'var(--muted)',
+  paged:                  '#f85149',
+  rejected_invalid_field: '#f85149',
+  execute_failed:         '#f85149',
+};
+const _ARQ_TIER_COLORS = {LOW:'var(--green)', MEDIUM:'#d29922', HIGH:'#f85149', CRIT:'#f85149'};
+
+function _arqRowHtml(a){
+  const status = a.status || 'pending';
+  const color = _ARQ_STATUS_COLORS[status] || 'var(--muted)';
+  const tier = a.risk_tier || '—';
+  const tierColor = _ARQ_TIER_COLORS[tier] || 'var(--muted)';
+  const when = a.ts ? new Date(a.ts * 1000).toLocaleTimeString() : '';
+  // Approve/Decline only for an action still awaiting a verdict; terminal/parked rows show a label.
+  const actions = (status === 'pending_approval')
+    ? `<button class="btn g" style="padding:3px 8px;font-size:11px" onclick="arqApprove('${escapeHtmlSafe(a.id)}', event)">&#x2705; Approve</button>
+       <button class="btn r" style="padding:3px 8px;font-size:11px" onclick="arqDecline('${escapeHtmlSafe(a.id)}', event)">&#x274C; Decline</button>`
+    : `<span style="color:${color};font-size:11px">${escapeHtmlSafe(status)}</span>`;
+  const fieldsWarn = (a.missing_fields && a.missing_fields.length)
+    ? `<div style="font-size:10px;color:#d29922;margin-top:3px">missing: ${escapeHtmlSafe(a.missing_fields.join(', '))}</div>` : '';
+  const invalidWarn = (a.invalid_fields && a.invalid_fields.length)
+    ? `<div style="font-size:10px;color:#f85149;margin-top:3px">invalid (rejected): ${escapeHtmlSafe(a.invalid_fields.join(', '))}</div>` : '';
+  const declineLine = a.decline_reason
+    ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;font-style:italic">declined: "${escapeHtmlSafe(a.decline_reason)}"</div>` : '';
+  const approvedLine = a.approved_by
+    ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">approved by ${escapeHtmlSafe(a.approved_by)}</div>` : '';
+  const errLine = (a.result && a.result.error)
+    ? `<div style="font-size:11px;color:#f85149;margin-top:3px">error: ${escapeHtmlSafe(a.result.error)}</div>` : '';
+  // payload is config/command text — a classic XSS sink; always escape it.
+  const payloadLine = a.payload
+    ? `<div style="font-size:10px;color:var(--muted);margin-top:4px"><code style="font-size:10px;color:var(--text)">${escapeHtmlSafe(a.payload)}</code></div>` : '';
+  return `
+    <div style="border:1px solid var(--border);border-left:3px solid ${color};border-radius:5px;padding:10px;margin:8px 12px;background:var(--bg2)">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:240px">
+          <div style="font-size:12px;font-weight:600;color:var(--text)">
+            ${escapeHtmlSafe(a.host || '—')}
+            <span style="margin-left:8px;padding:1px 6px;border-radius:3px;font-size:10px;background:${color};color:#000">${escapeHtmlSafe(status)}</span>
+            <span style="margin-left:6px;padding:1px 6px;border-radius:3px;font-size:10px;background:${tierColor};color:#000">${escapeHtmlSafe(tier)}</span>
+            <span style="margin-left:6px;color:var(--muted);font-size:10px">${escapeHtmlSafe(a.action_type || '')}</span>
+            ${when ? `<span style="margin-left:6px;color:var(--muted);font-size:10px">${escapeHtmlSafe(when)}</span>` : ''}
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px">
+            runbook: <b style="color:var(--text)">${escapeHtmlSafe(a.runbook || '—')}</b>
+            &middot; ${escapeHtmlSafe(a.anomaly_type || '')}/${escapeHtmlSafe(a.metric || '')}
+          </div>
+          ${fieldsWarn}${invalidWarn}${declineLine}${approvedLine}${errLine}${payloadLine}
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">${actions}</div>
+      </div>
+    </div>`;
+}
+
+function _arqRenderTiles(byStatus){
+  const b = byStatus || {};
+  document.getElementById('arq-pending-count').textContent  = b.pending_approval || 0;
+  document.getElementById('arq-exec-count').textContent     = b.auto_executed || 0;
+  document.getElementById('arq-enrich-count').textContent   = b.needs_enrichment || 0;
+  document.getElementById('arq-declined-count').textContent = b.declined || 0;
+  document.getElementById('arq-paged-count').textContent    =
+    (b.paged || 0) + (b.rejected_invalid_field || 0) + (b.execute_failed || 0);
+}
+
+function _arqRenderQueue(actions){
+  const out = document.getElementById('arq-out');
+  document.getElementById('arq-stats').textContent =
+    `${actions.length} action${actions.length===1?'':'s'} in queue`;
+  if (!actions.length) {
+    out.innerHTML = `<div style="padding:40px;text-align:center;color:var(--muted);font-size:12px">No actions yet. The queue fills when a detected anomaly matches a runbook &mdash; LOW auto-executes, MEDIUM/HIGH wait here for your approval.</div>`;
+    return;
+  }
+  out.innerHTML = actions.map(_arqRowHtml).join('');
+}
+
+async function arqRefresh(){
+  const btn = document.getElementById('arq-refresh-btn');
+  if (!LIVE) {
+    document.getElementById('arq-out').innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:12px">Auto-Remediation Queue requires LIVE mode (backend on localhost:5757).</div>';
+    return;
+  }
+  btn.disabled = true;
+  const orig = btn.textContent; btn.textContent = '⏳ Loading…';
+  const [st, q] = await Promise.all([
+    apiFetch('/api/auto-remediate/status', {timeout: 10000}),
+    apiFetch('/api/auto-remediate/queue?limit=50', {timeout: 10000}),
+  ]);
+  btn.disabled = false; btn.textContent = orig;
+  if (st.ok && st.data) _arqRenderTiles(st.data.by_status);
+  if (!q.ok || !q.data) {
+    document.getElementById('arq-out').innerHTML = '<div style="padding:24px;text-align:center;color:#f85149;font-size:12px">Failed to load the auto-remediation queue.</div>';
+    return;
+  }
+  _arqRenderQueue(q.data.actions || []);
+}
+
+async function arqApprove(actionId, ev){
+  const btn = ev && ev.target;
+  let orig;
+  if (btn) { orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ …'; }
+  const r = await apiFetch('/api/auto-remediate/approve/' + encodeURIComponent(actionId),
+    {method:'POST', body: JSON.stringify({}), timeout: 15000});
+  if (btn) { btn.disabled = false; btn.textContent = orig; }
+  if (!r.ok || (r.data && r.data.error)) {
+    return alert('Approve failed: ' + ((r.data && r.data.error) || 'unknown'));
+  }
+  await arqRefresh();   // no get-single route — re-fetch the whole queue
+}
+
+async function arqDecline(actionId, ev){
+  const reason = (prompt('Decline reason? (optional)') || '').trim();
+  const btn = ev && ev.target;
+  let orig;
+  if (btn) { orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ …'; }
+  const r = await apiFetch('/api/auto-remediate/decline/' + encodeURIComponent(actionId),
+    {method:'POST', body: JSON.stringify({reason}), timeout: 10000});
+  if (btn) { btn.disabled = false; btn.textContent = orig; }
+  if (!r.ok || (r.data && r.data.error)) {
+    return alert('Decline failed: ' + ((r.data && r.data.error) || 'unknown'));
+  }
+  await arqRefresh();
+}
+
+window.arqRefresh = arqRefresh;
+window.arqApprove = arqApprove;
+window.arqDecline = arqDecline;
 
 /* ── Day-8: Auto-Postmortem ────────────────────────────────────
    Drives #tab-postmortem. Backend endpoints:

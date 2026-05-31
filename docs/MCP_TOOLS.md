@@ -8,10 +8,10 @@ A Model Context Protocol (MCP) server that exposes the multivendor-ai-network la
 
 | Entrypoint | File | Tools | Status | Use when |
 |---|---|---|---|---|
-| **`src/mcp_dcn_server.py`** | single file, FastMCP, stdio | **63** (Phase-5 canonical) | **Canonical** — referenced from `docs/PHASE_5_HANDOFF.md` | Default. All operational surfaces exposed: `dcn_run_command`, `mv_clab_status`, `mv_change_closed_loop`, `mv_anomaly_detect`, `mv_forecast_fleet`, `mv_chaos_bgp`, etc. |
+| **`src/mcp_dcn_server.py`** | single file, FastMCP, stdio | **68** documented (69 on disk) | **Canonical** — referenced from `docs/PHASE_5_HANDOFF.md` | Default. All operational surfaces exposed: `dcn_run_command`, `mv_clab_status`, `mv_change_closed_loop`, `mv_anomaly_detect`, `mv_forecast_fleet`, `mv_chaos_bgp`, etc. |
 | `src/mcp_server/` package (`server.py` + `tools.py`) | 14 tools, FastMCP | Lightweight wrapper, native dict returns | Drop-in for testing / for clients that need native Python dicts (not JSON strings) | Less-used; kept for the composite operational tools with type-rich returns. |
 
-**For all new work, target `src/mcp_dcn_server.py`.** The package form is a parallel surface from an earlier iteration; it stays around because its 14 high-level composites (drift, postmortem, remediation) have a cleaner per-tool schema, but the canonical 63-tool surface in `mcp_dcn_server.py` is the launch surface and the one the Phase 5 handoff references.
+**For all new work, target `src/mcp_dcn_server.py`.** The package form is a parallel surface from an earlier iteration; it stays around because its 14 high-level composites (drift, postmortem, remediation) have a cleaner per-tool schema, but the canonical 68-tool surface (69 on disk) in `mcp_dcn_server.py` is the launch surface and the one the Phase 5 handoff references.
 
 ---
 
@@ -309,7 +309,25 @@ Two-layer separation by design: [tools.py](../src/mcp_server/tools.py) holds the
 | `mv_napalm_bgp` + `mv_napalm_job` | vendor-aware NAPALM-equivalent (4 vendors via docker exec) |
 | `mv_shadow_audit` | NetBox SoT vs running-config drift audit |
 
-Phase 6 will add 5 more (auto-remediation surface) for a total of 68. See `PHASE6_PLAN.md`.
+## Phase 6E additions (2026-05-31) — 5 auto-remediation tools (63 → 68 documented)
+
+| Tool | Wraps |
+|---|---|
+| `mv_auto_status` | `GET /api/auto-remediate/status` — loop health + `by_status` action counts |
+| `mv_auto_queue(limit)` | `GET /api/auto-remediate/queue` — recent/pending action records (top-level `actions`) |
+| `mv_auto_runbooks` | `GET /api/auto-remediate/runbook` (singular) — the 8-runbook catalog |
+| `mv_auto_approve(action_id)` | `POST /api/auto-remediate/approve/<id>` — execute a queued MED/HIGH action |
+| `mv_auto_decline(action_id, reason)` | `POST /api/auto-remediate/decline/<id>` — decline + GAIT reason |
+
+GET tools return the raw `_get` string; POST tools return `json.dumps(_post(...))`. See
+[`PHASE6_AUTO_REMEDIATION.md`](PHASE6_AUTO_REMEDIATION.md) for the full Item E write-up.
+
+**Tool count:** **68 documented** (63 Phase-5 baseline + 5 Phase 6E). On disk there are **69**
+`@mcp.tool()` decorators — the extra one is `mv_device_health`, added after the docs last
+stated 63 (post-Phase-5); no tool was dropped to force the count.
+
+**Auth env var:** the stdio MCP process reads `DCN_API_KEY` (via `_auth_headers()`) — this is
+**separate** from the Flask app's `MVLAB_API_KEY` gate. Never cross-wire them.
 
 ## Running Tests
 
@@ -321,7 +339,7 @@ python -m pytest test_mcp_server.py -v
 
 30 tests cover the `src/mcp_server/` package layer: HTTP-mocked tools, per-vendor dispatch for `get_config` (Junos `display set`, EOS/FRR/IOS `show running-config`, SRL `info`), registry layer (decorator presence + schema), resources, prompts, and config env override.
 
-The canonical `src/mcp_dcn_server.py` (63 tools) is validated by the live 41-pass stress test documented in `docs/POST_AUDIT_FIXES_2.md` rather than a unit-test suite — every tool was exercised against the live fabric on 2026-05-25 23:27.
+The canonical `src/mcp_dcn_server.py` (68 documented / 69 on disk) is validated by the live 41-pass stress test documented in `docs/POST_AUDIT_FIXES_2.md` rather than a unit-test suite — every tool was exercised against the live fabric on 2026-05-25 23:27.
 
 ---
 
