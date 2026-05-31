@@ -34,6 +34,10 @@ class DCNClient:
     timeout: float = 30.0
     ask_timeout: float = 120.0
     report_timeout: float = 300.0
+    api_key: str = ""  # sent as X-API-Key; DCN API gates mutating endpoints on it
+
+    def _headers(self) -> dict | None:
+        return {"X-API-Key": self.api_key} if self.api_key else None
 
     async def _get(self, path: str, params: dict | None = None,
                    timeout: float | None = None) -> Any:
@@ -41,6 +45,7 @@ class DCNClient:
         try:
             resp = await self.client.get(
                 f"{self.base_url}{path}", params=clean,
+                headers=self._headers(),
                 timeout=timeout or self.timeout,
             )
             resp.raise_for_status()
@@ -55,6 +60,7 @@ class DCNClient:
         try:
             resp = await self.client.post(
                 f"{self.base_url}{path}", json=body,
+                headers=self._headers(),
                 timeout=timeout or self.timeout,
             )
             resp.raise_for_status()

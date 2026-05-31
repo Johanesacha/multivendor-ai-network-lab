@@ -220,3 +220,33 @@ class TestQueryParamCleaning:
 
         run(go())
         assert seen["q"] == {}  # nothing sent when all filters are empty
+
+
+class TestApiKeyHeader:
+    """Full-rollout: the DCN API now gates mutating endpoints behind X-API-Key."""
+
+    def _seen_key(self, call, **client_kwargs):
+        seen = {}
+
+        def handler(req):
+            seen["key"] = req.headers.get("x-api-key")
+            return httpx.Response(200, json={"ok": True, "status": "ok"})
+
+        async def go():
+            async with make_client(handler) as c:
+                client = DCNClient(base_url="http://dcn", client=c, **client_kwargs)
+                await call(client)
+
+        run(go())
+        return seen["key"]
+
+    def test_post_sends_x_api_key_when_configured(self):
+        key = self._seen_key(lambda c: c.ask("hi"), api_key="secret123")
+        assert key == "secret123"
+
+    def test_get_sends_x_api_key_when_configured(self):
+        key = self._seen_key(lambda c: c.health(), api_key="secret123")
+        assert key == "secret123"
+
+    def test_no_key_header_when_unconfigured(self):
+        assert self._seen_key(lambda c: c.incident("10.0.0.1")) is None

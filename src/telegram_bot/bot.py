@@ -97,6 +97,7 @@ class ChatOpsBot:
             timeout=self.config.request_timeout,
             ask_timeout=self.config.ask_timeout,
             report_timeout=self.config.report_timeout,
+            api_key=self.config.dcn_api_key,
         )
         await app.bot.set_my_commands(_COMMANDS)
         log.info("ChatOps bot online — DCN API %s", self.config.dcn_api_url)

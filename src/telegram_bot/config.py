@@ -22,6 +22,7 @@ class BotConfig:
     allowed_chat_ids: frozenset[int]
     admin_chat_ids: frozenset[int]
     dcn_api_url: str = DEFAULT_DCN_API_URL
+    dcn_api_key: str = ""  # X-API-Key for the DCN API's mutating endpoints
     rate_limit_per_min: int = 20
     request_timeout: float = 30.0
     ask_timeout: float = 120.0
@@ -40,6 +41,7 @@ class BotConfig:
             allowed_chat_ids=parse_chat_ids(env.get("TELEGRAM_ALLOWED_CHAT_IDS")),
             admin_chat_ids=parse_chat_ids(env.get("TELEGRAM_ADMIN_CHAT_IDS")),
             dcn_api_url=(env.get("DCN_API_URL") or DEFAULT_DCN_API_URL).rstrip("/"),
+            dcn_api_key=(env.get("DCN_API_KEY") or "").strip(),
             rate_limit_per_min=int(env.get("TELEGRAM_RATE_LIMIT_PER_MIN", "20")),
             request_timeout=float(env.get("TELEGRAM_REQUEST_TIMEOUT", "30")),
             ask_timeout=float(env.get("TELEGRAM_ASK_TIMEOUT", "120")),

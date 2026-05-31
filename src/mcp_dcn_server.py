@@ -16,6 +16,17 @@ import urllib.error
 from mcp.server.fastmcp import FastMCP
 
 DCN_URL = os.environ.get("DCN_API_URL", "http://localhost:5757")
+DCN_API_KEY = os.environ.get("DCN_API_KEY", "")
+
+
+def _auth_headers(base=None):
+    """Attach X-API-Key when DCN_API_KEY is set — the DCN API gates mutating
+    endpoints behind this shared secret."""
+    headers = dict(base or {})
+    if DCN_API_KEY:
+        headers["X-API-Key"] = DCN_API_KEY
+    return headers
+
 
 mcp = FastMCP(
     "dcn-network-tool",
@@ -37,7 +48,7 @@ def _post(path: str, body: dict, timeout: int = 180) -> dict:
     req = urllib.request.Request(
         f"{DCN_URL}{path}",
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=_auth_headers({"Content-Type": "application/json"}),
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -56,7 +67,8 @@ def _get(path: str, params: dict = None, timeout: int = 30) -> str:
         if qs:
             url += f"?{qs}"
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        req = urllib.request.Request(url, headers=_auth_headers())
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read().decode()
     except Exception as e:
         return json.dumps({"error": str(e)})
