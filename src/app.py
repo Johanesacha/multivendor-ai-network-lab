@@ -15421,6 +15421,69 @@ except Exception as _aegis_err:  # noqa: BLE001 — never block app boot on AEGI
     _AEGIS_ENABLED = False
 
 
+# ── Phase 6: Event-Initiated Remediation (auto-remediate) ─────────────────────
+#    Anomaly -> matched runbook (src/runbooks/auto.yaml) -> risk-gated execution.
+#    Endpoints are always registered; the background loop is OPT-IN via
+#    DCN_AUTO_REMEDIATE_S (seconds). Fail-safe: never blocks app boot.
+try:
+    import auto_remediate as _ar
+
+    _AR_BASE = f"http://127.0.0.1:{int(os.environ.get('DCN_PORT', '5757'))}"
+
+    def _ar_headers():
+        k = os.environ.get("DCN_API_KEY", "")
+        h = {"Content-Type": "application/json"}
+        if k:
+            h["X-API-Key"] = k
+        return h
+
+    def _ar_trigger_closed_loop(hostname, proposed_change, timeout_s=30):
+        r = _requests.post(f"{_AR_BASE}/api/change/closed-loop",
+                           json={"hostname": hostname, "proposed_change": proposed_change,
+                                 "timeout_s": timeout_s}, headers=_ar_headers(), timeout=12)
+        return r.json()
+
+    def _ar_run_exec(host, command):
+        r = _requests.post(f"{_AR_BASE}/api/run", json={"hostname": host, "raw": command},
+                           headers=_ar_headers(), timeout=15)
+        return r.json() if r.ok else {"status": r.status_code, "error": r.text[:200]}
+
+    def _ar_blast(host):
+        try:
+            r = _requests.post(f"{_AR_BASE}/api/batfish/blast-radius", json={"device": host},
+                               headers=_ar_headers(), timeout=8)
+            return int((r.json().get("blast_radius") or {}).get("count", 0))
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def _ar_fetch_anomalies():
+        try:
+            r = _requests.get(f"{_AR_BASE}/api/anomaly/detect", timeout=10)
+            return r.json().get("anomalies", [])
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _ar_vendor_of(host):
+        for _d in DEVICES:
+            if _d.get("hostname") == host:
+                return _d.get("vendor_canonical", "")
+        return ""
+
+    _AUTO_REMEDIATOR = _ar.AutoRemediator(_ar.Deps(
+        trigger_closed_loop=_ar_trigger_closed_loop, run_exec=_ar_run_exec,
+        emit=_agent_emit, blast_radius=_ar_blast,
+        fetch_anomalies=_ar_fetch_anomalies, vendor_of=_ar_vendor_of))
+    app.register_blueprint(_ar.make_blueprint(_AUTO_REMEDIATOR))
+    _ar_loop_s = int(os.environ.get("DCN_AUTO_REMEDIATE_S", "0"))
+    if _ar_loop_s > 0:
+        _ar.start_loop(_AUTO_REMEDIATOR, _ar_loop_s)
+        print(f"[AUTO-REMEDIATE] 6 endpoints + loop ON (every {_ar_loop_s}s)")
+    else:
+        print("[AUTO-REMEDIATE] 6 endpoints registered (loop OFF — set DCN_AUTO_REMEDIATE_S=N)")
+except Exception as _ar_err:  # noqa: BLE001 — never block app boot
+    print(f"[AUTO-REMEDIATE] unavailable: {_ar_err}")
+
+
 if __name__ == "__main__":
     import sys as _sys
     port = int(os.environ.get("DCN_PORT", "5757"))
