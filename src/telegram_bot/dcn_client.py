@@ -11,7 +11,7 @@ friendly message instead of leaking a stack trace into a chat.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -34,7 +34,9 @@ class DCNClient:
     timeout: float = 30.0
     ask_timeout: float = 120.0
     report_timeout: float = 300.0
-    api_key: str = ""  # sent as X-API-Key; DCN API gates mutating endpoints on it
+    # sent as X-API-Key; DCN API gates mutating endpoints on it. repr=False keeps
+    # the secret out of tracebacks / locals-dumping error reporters.
+    api_key: str = field(default="", repr=False)
 
     def _headers(self) -> dict | None:
         return {"X-API-Key": self.api_key} if self.api_key else None

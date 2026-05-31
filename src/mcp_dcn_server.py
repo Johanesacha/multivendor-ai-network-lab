@@ -7,24 +7,26 @@ Usage:
     python mcp_dcn_server.py
 
 Environment:
-    DCN_API_URL  — Base URL of the DCN Network Tool API (default: http://localhost:5757)
+    DCN_API_URL    — Base URL of the DCN Network Tool API (default: http://localhost:5757)
+    MVLAB_API_KEY  — Shared secret sent as X-API-Key for the API's mutating endpoints
 """
 import os
 import json
 import urllib.request
 import urllib.error
+import urllib.parse
 from mcp.server.fastmcp import FastMCP
 
 DCN_URL = os.environ.get("DCN_API_URL", "http://localhost:5757")
-DCN_API_KEY = os.environ.get("DCN_API_KEY", "")
+MVLAB_API_KEY = os.environ.get("MVLAB_API_KEY", "")
 
 
 def _auth_headers(base=None):
-    """Attach X-API-Key when DCN_API_KEY is set — the DCN API gates mutating
+    """Attach X-API-Key when MVLAB_API_KEY is set — the DCN API gates mutating
     endpoints behind this shared secret."""
     headers = dict(base or {})
-    if DCN_API_KEY:
-        headers["X-API-Key"] = DCN_API_KEY
+    if MVLAB_API_KEY:
+        headers["X-API-Key"] = MVLAB_API_KEY
     return headers
 
 
@@ -62,10 +64,11 @@ def _post(path: str, body: dict, timeout: int = 180) -> dict:
 def _get(path: str, params: dict = None, timeout: int = 30) -> str:
     """GET from DCN API and return raw text."""
     url = f"{DCN_URL}{path}"
-    if params:
-        qs = "&".join(f"{k}={v}" for k, v in params.items() if v)
-        if qs:
-            url += f"?{qs}"
+    # urlencode percent-encodes every value, so caller-supplied strings containing
+    # &, =, #, %, or spaces can't splice extra query params or break the URL.
+    qs = urllib.parse.urlencode({k: v for k, v in (params or {}).items() if v})
+    if qs:
+        url += f"?{qs}"
     try:
         req = urllib.request.Request(url, headers=_auth_headers())
         with urllib.request.urlopen(req, timeout=timeout) as resp:

@@ -103,8 +103,11 @@ class TestAuthGuard:
 
         guarded = bot._guard(inner)
         asyncio.run(guarded(FakeUpdate(1, "/health"), None))  # allowed
-        asyncio.run(guarded(FakeUpdate(1, "/health"), None))  # blocked
+        blocked = FakeUpdate(1, "/health")
+        asyncio.run(guarded(blocked, None))  # blocked
         assert calls == [True]  # only the first ran
+        # Ultrareview #7: the throttled user must actually be told they were limited.
+        assert any("Rate limit" in str(r) for r in blocked.effective_message.replies)
 
 
 # ── Fakes for exercising command handlers without a live DCN API ─────────────
@@ -166,6 +169,25 @@ class FlakyMessage(FakeMessage):
             raise BadRequest("can't parse entities")
         self.replies.append(text)
         return FakeMessage()
+
+
+class FlakyPlaceholder(FakeMessage):
+    """edit_text rejects the first Markdown attempt, accepts the plain retry."""
+
+    async def edit_text(self, text, **kwargs):
+        if "parse_mode" in kwargs:
+            raise BadRequest("can't parse entities")
+        self.replies.append(("edit", text))
+        return self
+
+
+class FlakyPlaceholderParent(FakeMessage):
+    """reply_text hands back a FlakyPlaceholder as the editable placeholder."""
+
+    async def reply_text(self, text, **kwargs):
+        self.replies.append(text)
+        self.child = FlakyPlaceholder()
+        return self.child
 
 
 class TestCommandHandlers:
@@ -250,6 +272,17 @@ class TestCommandHandlers:
         assert placeholder is not None
         assert any("orchestrator down" in str(e) for e in placeholder.replies)
 
+    def test_ask_error_falls_back_to_plain_text_in_placeholder(self):
+        # Ultrareview #6: when the Markdown placeholder edit is rejected, the
+        # plain-text retry must still deliver the error text to the user.
+        bot = self._ready_bot(FakeAskErrorDCN())
+        upd = FakeUpdate(1, "/ask boom")
+        upd.effective_message = FlakyPlaceholderParent("/ask boom")
+        asyncio.run(bot.cmd_ask(upd, FakeContext(["boom"])))
+        placeholder = upd.effective_message.child
+        assert placeholder is not None
+        assert any("orchestrator down" in str(e) for e in placeholder.replies)
+
 
 class TestGuardEdgeCases:
     """Sourcery #4: guard must handle updates missing chat / message."""
@@ -281,12 +314,23 @@ class TestGuardEdgeCases:
 
 
 class TestSendFallback:
-    def test_falls_back_to_plain_text_on_bad_request(self):
+    def test_falls_back_to_stripped_plain_text_on_bad_request(self):
+        # Ultrareview #3: the fallback strips decorative Markdown (* and backticks)
+        # instead of re-sending raw markup that Telegram renders literally.
         bot = _bot(TELEGRAM_ALLOWED_CHAT_IDS="1")
         upd = FakeUpdate(1, "/health")
         upd.effective_message = FlakyMessage()
-        asyncio.run(bot._send(upd, "*markdown*"))
-        assert "*markdown*" in upd.effective_message.replies
+        asyncio.run(bot._send(upd, "*markdown* `code`"))
+        assert "markdown code" in upd.effective_message.replies
+        assert "*markdown*" not in upd.effective_message.replies
+
+    def test_fallback_preserves_underscores_in_hostnames(self):
+        # Underscores belong to real device hostnames / JSON keys — never stripped.
+        bot = _bot(TELEGRAM_ALLOWED_CHAT_IDS="1")
+        upd = FakeUpdate(1, "/devices")
+        upd.effective_message = FlakyMessage()
+        asyncio.run(bot._send(upd, "`de_fra_core_01` is up"))
+        assert "de_fra_core_01 is up" in upd.effective_message.replies
 
 
 class TestLoggingHygiene:
@@ -302,6 +346,16 @@ class TestLoggingHygiene:
         _silence_token_logging()
         assert logging.getLogger("httpx").level == logging.WARNING
         assert logging.getLogger("httpcore").level == logging.WARNING
+
+    def test_silence_covers_telegram_namespace(self):
+        # Ultrareview #2: telegram.Bot logs its token-bearing base URL at DEBUG,
+        # so the parent 'telegram' logger must be raised to WARNING too.
+        import logging
+        from telegram_bot.bot import _silence_token_logging
+
+        logging.getLogger("telegram").setLevel(logging.DEBUG)
+        _silence_token_logging()
+        assert logging.getLogger("telegram").level == logging.WARNING
 
 
 class TestAuditLogRedaction:
