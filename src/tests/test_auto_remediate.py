@@ -152,7 +152,7 @@ def test_endpoints():
     deps, calls, _ = make_deps(vendor="frr")
     rem = ar.AutoRemediator(deps)
     app = Flask(__name__)
-    app.register_blueprint(ar.make_blueprint(rem))
+    app.register_blueprint(ar.make_blueprint(rem, enable_simulate=True))
     c = app.test_client()
 
     assert c.get("/api/auto-remediate/status").get_json()["runbooks_loaded"] == 8
@@ -163,6 +163,39 @@ def test_endpoints():
                  json={"detector": "flap", "metric": "bgp_established", "device": "de-fra-core-01"})
     assert sim.get_json()["status"] == "auto_executed"
     assert c.get("/api/auto-remediate/queue").get_json()["actions"][0]["runbook"] == "bgp_flap_reset"
+
+
+# ── security: injection guard + gated debug hook ────────────────────────────────
+def test_rejects_injection():
+    deps, calls, _ = make_deps(vendor="frr")
+    rem = ar.AutoRemediator(deps)
+    rec = rem.evaluate({"detector": "drift", "metric": "mtu", "device": "leaf1",
+                        "interface": "eth2\n router bgp 666", "expected": 9000})
+    assert rec["status"] == "rejected_invalid_field"
+    assert "interface" in rec["invalid_fields"]
+    assert calls["closed_loop"] == [] and calls["exec"] == []     # never executed
+    assert "router bgp 666" not in rec["payload"]                 # injected content not surfaced
+
+
+def test_valid_field_rules():
+    assert ar.valid_field("interface", "Ethernet1/1.100")
+    assert not ar.valid_field("interface", "eth0; reboot")
+    assert not ar.valid_field("interface", "eth0\nfoo")
+    assert ar.valid_field("peer_ip", "10.200.0.13")
+    assert not ar.valid_field("peer_ip", "10.0.0.1 evil")
+    assert ar.valid_field("expected", "9000")
+    assert not ar.valid_field("expected", "9000 | sh")
+
+
+def test_simulate_gated_off_by_default():
+    from flask import Flask
+    deps, _, _ = make_deps()
+    rem = ar.AutoRemediator(deps)
+    app = Flask(__name__)
+    app.register_blueprint(ar.make_blueprint(rem, enable_simulate=False))
+    c = app.test_client()
+    assert c.post("/api/auto-remediate/simulate", json={}).status_code == 404   # not registered
+    assert c.get("/api/auto-remediate/status").status_code == 200               # others still up
 
 
 # ── standalone runner (no pytest needed) ─────────────────────────────────────────

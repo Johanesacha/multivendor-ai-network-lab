@@ -25,9 +25,10 @@ from __future__ import annotations
 import os
 import re
 import time
+import ipaddress
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 import yaml
@@ -117,6 +118,40 @@ def escalate_tier(floor: str, blast_count: int) -> str:
     return _TIER_BY_ORDER[order]
 
 
+# ── input validation (defense-in-depth against config/command injection) ──────
+# Anomaly fields flow into device config/command payloads, so every placeholder
+# value is strictly validated BEFORE substitution. Anything that fails (newlines,
+# extra commands, shell/config metacharacters) parks the action `rejected_invalid_field`
+# and is never executed — even if the source anomaly is untrusted (e.g. /simulate).
+_FIELD_RULES = {
+    "host":      re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"),
+    "vendor":    re.compile(r"^[a-z0-9-]{1,20}$"),
+    "interface": re.compile(r"^[A-Za-z][A-Za-z0-9/._:-]{0,31}$"),
+    "expected":  re.compile(r"^[A-Za-z0-9._-]{1,32}$"),    # mtu/area int, admin_state token
+    "asn":       re.compile(r"^\d{1,10}$"),
+    "metric":    re.compile(r"^[a-z0-9_]{1,40}$"),
+    "severity":  re.compile(r"^[a-z]{1,16}$"),
+}
+
+
+def valid_field(name: str, value) -> bool:
+    """Strict per-placeholder validation. Reject control chars + anything not matching
+    the field's whitelist; IPs must parse via ipaddress."""
+    s = str(value)
+    if "\n" in s or "\r" in s:
+        return False
+    if name == "peer_ip":
+        try:
+            ipaddress.ip_address(s)
+            return True
+        except ValueError:
+            return False
+    rule = _FIELD_RULES.get(name)
+    if rule is not None:
+        return bool(rule.match(s))
+    return bool(re.match(r"^[A-Za-z0-9._:/-]{1,64}$", s))  # any other placeholder: short safe token
+
+
 # ── dependency surface (all side effects) ─────────────────────────────────────
 @dataclass
 class Deps:
@@ -170,6 +205,8 @@ class AutoRemediator:
         action = rb["action"]
         atype = action["type"]
         payload = action.get("proposed_change") if atype == "config" else action.get("command")
+        needed = set(_PLACEHOLDER.findall(payload or ""))
+        invalid = sorted(k for k in needed if k in ctx and not valid_field(k, ctx[k]))
         filled, missing = fill_template(payload, ctx)
         tier = escalate_tier(rb["risk_tier"], d.blast_radius(host) if host else 0)
 
@@ -178,11 +215,15 @@ class AutoRemediator:
             "ts": d.now(), "host": host, "vendor": vendor,
             "runbook": rb["id"], "anomaly_type": norm["anomaly_type"],
             "metric": norm["metric"], "severity": norm["severity"],
-            "risk_tier": tier, "action_type": atype, "payload": filled,
-            "missing_fields": missing, "status": "pending", "result": None,
+            "risk_tier": tier, "action_type": atype,
+            "payload": (payload if invalid else filled),   # never surface injected content
+            "missing_fields": missing, "invalid_fields": invalid,
+            "status": "pending", "result": None,
         }
 
-        if missing:
+        if invalid:
+            rec["status"] = "rejected_invalid_field"      # injection guard — never execute
+        elif missing:
             rec["status"] = "needs_enrichment"            # safe: never fire a half-filled template
         elif tier == "CRIT":
             rec["status"] = "paged"
@@ -297,8 +338,10 @@ def start_loop(remediator: AutoRemediator, interval_s: int) -> threading.Thread:
     return t
 
 
-def make_blueprint(remediator: AutoRemediator):
+def make_blueprint(remediator: AutoRemediator, enable_simulate: Optional[bool] = None):
     from flask import Blueprint, jsonify, request
+    if enable_simulate is None:
+        enable_simulate = os.environ.get("DCN_AUTO_REMEDIATE_SIMULATE") == "1"
     bp = Blueprint("auto_remediate", __name__)
 
     @bp.route("/api/auto-remediate/status", methods=["GET"])
@@ -322,10 +365,14 @@ def make_blueprint(remediator: AutoRemediator):
         body = request.get_json(silent=True) or {}
         return jsonify(remediator.decline(action_id, body.get("reason", "")))
 
-    # test-only hook: inject a synthetic anomaly to drive a demo without waiting
-    @bp.route("/api/auto-remediate/simulate", methods=["POST"])
-    def _simulate():
-        body = request.get_json(force=True) or {}
-        return jsonify(remediator.evaluate(body))
+    # debug/demo hook: inject a synthetic anomaly to drive an auto-fix without waiting.
+    # OFF by default — it accepts an arbitrary anomaly body, so enable it explicitly with
+    # DCN_AUTO_REMEDIATE_SIMULATE=1. Still behind the app's X-API-Key gate (POST), and
+    # arbitrary placeholder values are rejected by valid_field() before any execution.
+    if enable_simulate:
+        @bp.route("/api/auto-remediate/simulate", methods=["POST"])
+        def _simulate():
+            body = request.get_json(force=True) or {}
+            return jsonify(remediator.evaluate(body))
 
     return bp

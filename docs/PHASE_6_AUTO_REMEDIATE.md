@@ -47,9 +47,21 @@ It **never demotes** below the floor.
 | GET | `/api/auto-remediate/runbook` | open | loaded catalog summary |
 | POST | `/api/auto-remediate/approve/<id>` | **X-API-Key** | approve a queued MED/HIGH action → execute |
 | POST | `/api/auto-remediate/decline/<id>` | **X-API-Key** | decline + GAIT reason |
-| POST | `/api/auto-remediate/simulate` | **X-API-Key** | inject a synthetic anomaly (demo/test, no waiting) |
+| POST | `/api/auto-remediate/simulate` | **X-API-Key** + `DCN_AUTO_REMEDIATE_SIMULATE=1` | inject a synthetic anomaly (debug/demo) — **OFF by default** |
 
 Mutating endpoints require the `X-API-Key` header (`DCN_API_KEY`), like the rest of `/api/*`.
+
+## Security
+
+* **`simulate` is gated off by default.** It accepts an arbitrary anomaly body, so the
+  route is only registered when `DCN_AUTO_REMEDIATE_SIMULATE=1`, and it still sits behind
+  the `X-API-Key` gate. Real operation never needs it — anomalies arrive from
+  `/api/anomaly/detect`.
+* **Placeholder injection guard.** Every `{placeholder}` value (`interface`, `peer_ip`,
+  `asn`, `expected`, `host`, …) is strictly validated by `valid_field()` before substitution
+  into any config/command payload — control characters, shell/config metacharacters, and
+  malformed IPs are rejected. A failing value parks the action `rejected_invalid_field` and
+  it is **never executed**, even from an untrusted source.
 
 ## Enable the background loop (opt-in)
 
