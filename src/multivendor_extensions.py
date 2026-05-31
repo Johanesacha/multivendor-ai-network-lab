@@ -1484,6 +1484,73 @@ def _collect_live_frr(dev: dict, agent: str) -> str:
     return "\n\n".join(out)
 
 
+# Normalised vendor -> the show commands worth pulling for orchestrator context.
+_CLAB_SHOW = {
+    "srl": ["show interface", "show network-instance default protocols bgp neighbor"],
+    "eos": ["show interfaces", "show ip bgp summary"],
+    "frr": ["show interface", "show ip bgp summary"],
+}
+_DOCKER_BIN_CACHE = None
+
+
+def _clab_vkey(vendor: str) -> str:
+    v = (vendor or "").lower()
+    if "srl" in v or "nokia" in v:
+        return "srl"
+    if "eos" in v or "arista" in v or "ceos" in v:
+        return "eos"
+    return "frr"
+
+
+def _clab_argv(vkey: str, cmd: str) -> list:
+    if vkey == "srl":
+        return ["sr_cli", cmd]
+    if vkey == "eos":
+        return ["Cli", "-p", "15", "-c", cmd]
+    return ["vtysh", "-c", cmd]
+
+
+def _docker_bin() -> str:
+    """Resolve docker even under launchd's minimal PATH (no /usr/local/bin)."""
+    global _DOCKER_BIN_CACHE
+    if _DOCKER_BIN_CACHE:
+        return _DOCKER_BIN_CACHE
+    import shutil
+    found = shutil.which("docker")
+    if not found:
+        for p in ("/usr/local/bin/docker", "/opt/homebrew/bin/docker",
+                  os.path.expanduser("~/.docker/bin/docker"),
+                  "/Applications/Docker.app/Contents/Resources/bin/docker"):
+            if os.path.exists(p):
+                found = p
+                break
+    _DOCKER_BIN_CACHE = found or "docker"
+    return _DOCKER_BIN_CACHE
+
+
+def _collect_live_clab(dev: dict, agent: str) -> str:
+    """Pull live state from a containerlab node via `docker exec`, vendor-aware
+    (sr_cli / Cli / vtysh). Returns formatted output, or a short note per command
+    when the container is down / unreachable."""
+    import subprocess
+    container = dev.get("container") or ""
+    if not container:
+        return ""
+    vkey = _clab_vkey(dev.get("vendor"))
+    docker = _docker_bin()
+    out: list = []
+    for cmd in _CLAB_SHOW.get(vkey, _CLAB_SHOW["frr"]):
+        argv = [docker, "exec", container, *_clab_argv(vkey, cmd)]
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=12)
+            text = (r.stdout or "").strip() or (r.stderr or "").strip()
+            if text:
+                out.append(f"$ {cmd}\n{text[:1500]}")
+        except (OSError, subprocess.SubprocessError) as e:
+            out.append(f"# {cmd} unavailable: {e}")
+    return "\n\n".join(out)
+
+
 def _build_orchestrator_context(prompt: str, agent: str) -> str:
     devs = _find_devices_in_prompt(prompt)
     if not devs:
@@ -1511,7 +1578,12 @@ def _build_orchestrator_context(prompt: str, agent: str) -> str:
                     chunks.append(f"# config snippet ({cfg_path}) — first 60 lines\n" + "\n".join(cfg.splitlines()[:60]))
             except OSError as e:
                 chunks.append(f"# config read failed: {e}")
-        if d.get("live"):
+        container = d.get("container") or ""
+        if container.startswith("clab-"):
+            live = _collect_live_clab(d, agent)
+            if live.strip():
+                chunks.append(f"# live state (docker exec)\n{live}")
+        elif d.get("live"):
             chunks.append(f"# live state\n{_collect_live_frr(d, agent)}")
     return "\n\n".join(chunks)[:8000]  # hard cap to protect token budget
 
