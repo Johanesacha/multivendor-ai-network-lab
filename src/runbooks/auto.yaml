@@ -1,0 +1,149 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 6 — Auto-Remediation Catalog        (src/runbooks/auto.yaml)
+# ─────────────────────────────────────────────────────────────────────────────
+# Maps a DETECTED ANOMALY (from /api/anomaly/detect  [ADTK z-score / flap-count]
+# or /api/mv/forecast/run-fleet) to a remediation and an execution policy.
+# Consumed by src/auto_remediate.py (Phase 6 item A).
+#
+# Flow:
+#   anomaly --match--> runbook --risk_tier--> {
+#       LOW            : auto-execute now
+#       MEDIUM / HIGH  : queue for one-click human approval
+#       CRIT           : webhook page-out only, NEVER auto-acts
+#   } --execute--> POST /api/change/closed-loop   (action.type: config)
+#                  exec / collect path            (action.type: exec | collect)
+#
+# `risk_tier` here is the BASELINE FLOOR. src/auto_remediate.py may ESCALATE it
+# using Blast Radius BFS (more downstream devices affected -> higher tier) but
+# must never demote below the floor declared here.
+#
+# Config changes go through the full 6-stage closed loop (Predict -> Batfish ->
+# Apply/Health-Gate -> Watch -> POST-diff -> Intent verify) with auto-rollback,
+# so the body sent is exactly:  {hostname, proposed_change, timeout_s, dry_run}.
+#
+# Placeholders are substituted from the matched anomaly at fire time:
+#   {host} {vendor} {peer_ip} {interface} {asn} {metric} {value} {expected}
+# ─────────────────────────────────────────────────────────────────────────────
+schema_version: 1
+
+defaults:
+  timeout_s: 30          # health-gate watch window for config changes (seconds)
+  cooldown_min: 15       # never re-fire the same (host, runbook) within this window
+  vendors_supported: [frr, arista-eos, nokia-srl, junos]
+
+runbooks:
+
+  # 1 ── BGP session flapping -> soft-clear the peer (operational, non-config) ──
+  - id: bgp_flap_reset
+    description: "Soft-clear a BGP peer after repeated flaps to settle an unstable session."
+    match:
+      anomaly_type: flap_count
+      metric: bgp_session_count
+      threshold: { count: 5, window_min: 15 }
+      vendor: [frr, arista-eos, nokia-srl]
+    action:
+      type: exec                     # operational command — no config delta
+      command: "clear bgp * soft"    # device-scoped: fillable from a device-level anomaly (no {peer_ip} needed)
+    risk_tier: LOW                    # reversible, no config change -> auto-execute
+    ref_runbook: bgp_peer_down
+
+  # 2 ── OSPF area mismatch (drift vs SoT) -> restore the interface area ────────
+  - id: ospf_area_mismatch_fix
+    description: "Restore an interface's OSPF area to the source-of-truth value."
+    match:
+      anomaly_type: drift
+      metric: ospf_area
+      vendor: [frr, arista-eos]
+    action:
+      type: config
+      proposed_change: |
+        interface {interface}
+         ip ospf area {expected}
+    risk_tier: MEDIUM                 # adjacency-affecting -> human approval
+    ref_runbook: ospf_neighbor_stuck
+
+  # 3 ── Interface error/CRC spike -> clear counters to re-baseline (observe) ───
+  - id: interface_error_spike
+    description: "Clear counters on an interface with a rising error rate to confirm the rate before escalating."
+    match:
+      anomaly_type: zscore
+      metric: interface_error_rate
+      threshold: { zscore: 3.0, window_min: 10 }
+      vendor: [frr, arista-eos, nokia-srl]
+    action:
+      type: exec
+      command: "clear counters {interface}"
+    risk_tier: LOW
+
+  # 4 ── MTU drift vs SoT -> restore configured MTU ────────────────────────────
+  - id: mtu_drift_fix
+    description: "Restore an interface MTU that drifted from the source-of-truth value."
+    match:
+      anomaly_type: drift
+      metric: mtu
+      vendor: [frr, arista-eos, nokia-srl]
+    action:
+      type: config
+      proposed_change: |
+        interface {interface}
+         mtu {expected}
+    risk_tier: MEDIUM
+
+  # 5 ── BGP prefix-count spike (possible route leak) -> maximum-prefix guard ───
+  - id: route_leak_prefix_cap
+    description: "Apply a maximum-prefix guard when a peer's prefix count spikes — a possible route leak."
+    match:
+      anomaly_type: zscore
+      metric: bgp_prefix_count
+      threshold: { zscore: 4.0, window_min: 15 }
+      vendor: [frr, arista-eos, nokia-srl]
+    action:
+      type: config
+      proposed_change: |
+        router bgp {asn}
+         neighbor {peer_ip} maximum-prefix {expected} 90 restart 5
+    risk_tier: HIGH                   # routing-policy change -> senior approval
+
+  # 6 ── Control-plane CPU spike -> collect diagnostics only (never mutate) ─────
+  - id: cpu_spike_collect
+    description: "Collect top control-plane processes on a CPU spike. Diagnostic only — no change is applied."
+    match:
+      anomaly_type: zscore
+      metric: cpu_utilization
+      threshold: { zscore: 3.5, window_min: 10 }
+      vendor: [frr, arista-eos, nokia-srl, junos]
+    action:
+      type: collect
+      command: "show processes cpu sorted"
+    risk_tier: LOW
+
+  # 7 ── MAC move/flap storm (possible L2 loop) -> broadcast storm-control ──────
+  - id: mac_flap_stormcontrol
+    description: "Apply broadcast storm-control on a port with excessive MAC moves — a possible L2 loop."
+    match:
+      anomaly_type: flap_count
+      metric: mac_move_count
+      threshold: { count: 10, window_min: 5 }
+      vendor: [arista-eos, nokia-srl]
+    action:
+      type: config
+      proposed_change: |
+        interface {interface}
+         storm-control broadcast level 1.00
+    risk_tier: HIGH                   # L2 blast radius -> senior approval
+
+  # 8 ── Port admin-down drift vs SoT -> re-enable the port ────────────────────
+  - id: port_admin_down_fix
+    description: "Re-enable a port that drifted to admin-down versus the source-of-truth."
+    match:
+      anomaly_type: drift
+      metric: admin_state
+      expected: up
+      vendor: [frr, arista-eos, nokia-srl, junos]
+    action:
+      type: config
+      proposed_change: |
+        interface {interface}
+         no shutdown
+    risk_tier: MEDIUM
+    ref_runbook: interface_down
