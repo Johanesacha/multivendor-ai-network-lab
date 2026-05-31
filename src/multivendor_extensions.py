@@ -1337,8 +1337,79 @@ def mv_eval_run():
 
 # ── Pydantic-AI orchestrator ───────────────────────────────────────────────────
 
+# Role/group terms → predicate over a (lowercased) hostname.
+_DEVICE_GROUPS = {
+    "spine": lambda h: h.startswith("spine"),
+    "spines": lambda h: h.startswith("spine"),
+    "leaf": lambda h: h.startswith("leaf"),
+    "leafs": lambda h: h.startswith("leaf"),
+    "leaves": lambda h: h.startswith("leaf"),
+    "host": lambda h: h.startswith("host"),
+    "hosts": lambda h: h.startswith("host"),
+    "core": lambda h: "core" in h,
+    "cores": lambda h: "core" in h,
+    "edge": lambda h: "edge" in h,
+    "edges": lambda h: "edge" in h,
+    "dist": lambda h: "dist" in h,
+    "distribution": lambda h: "dist" in h,
+}
+_FLEET_TERMS = (
+    "all devices", "all the devices", "every device", "everything",
+    "whole network", "entire network", "entire fabric", "the fabric",
+    "the fleet", "network-wide", "across the network", "all routers", "all switches",
+)
+_GROUP_CAP = 4  # bound live-SSH latency + token budget for group queries
+
+
+def _resolve_device_group(prompt: str) -> list[dict]:
+    """Map role/group terms (spines, leafs, core routers, all devices) to a
+    concrete device list. Used only when no exact hostname is named."""
+    p = prompt.lower()
+    if any(t in p for t in _FLEET_TERMS):
+        return _ALL_DEVICES[:_GROUP_CAP]
+    words = set("".join(c if c.isalnum() else " " for c in p).split())
+    matched: list[dict] = []
+    seen: set[str] = set()
+    for term, pred in _DEVICE_GROUPS.items():
+        if term not in words:
+            continue
+        for d in _ALL_DEVICES:
+            h = (d.get("hostname") or "").lower()
+            if h and h not in seen and pred(h):
+                matched.append(d)
+                seen.add(h)
+    return matched[:_GROUP_CAP]
+
+
+def _role_of(host: str) -> str:
+    h = (host or "").lower()
+    for r in ("spine", "leaf", "host", "core", "edge", "dist"):
+        if r in h:
+            return r
+    return "device"
+
+
+def _fleet_summary() -> str:
+    """Compact inventory grounding for general questions that name no device or
+    group — lets the model answer with fabric awareness instead of asking for data."""
+    if not _ALL_DEVICES:
+        return ""
+    by_role: dict[str, list[str]] = {}
+    for d in _ALL_DEVICES:
+        by_role.setdefault(_role_of(d.get("hostname", "")), []).append(d.get("hostname", "?"))
+    lines = [
+        f"### Fleet inventory — {len(_ALL_DEVICES)} devices (the prompt named no specific device)",
+        "For live per-device state, name a device (e.g. de-fra-core-01) or a group "
+        "(the spines, the leafs, the core routers, all devices).",
+    ]
+    for role, hosts in sorted(by_role.items()):
+        lines.append(f"- {role}: {', '.join(sorted(hosts))}")
+    return "\n".join(lines)[:4000]
+
+
 def _find_devices_in_prompt(prompt: str) -> list[dict]:
-    """Match any inventory hostname appearing in the prompt (longest first)."""
+    """Match inventory hostnames (exact, longest first); if none are named, fall
+    back to role/group terms (spines, leafs, core routers, all devices)."""
     p = prompt.lower()
     hits: list[dict] = []
     seen: set[str] = set()
@@ -1347,7 +1418,9 @@ def _find_devices_in_prompt(prompt: str) -> list[dict]:
         if h and h in p and h not in seen:
             hits.append(d)
             seen.add(h)
-    return hits[:3]  # cap at 3 to keep context compact
+    if hits:
+        return hits[:3]  # exact hostnames win; cap to keep context compact
+    return _resolve_device_group(prompt)  # else resolve role/group terms
 
 
 _BGP_HEADERS = ("router bgp", "protocols bgp", "policy-options", "routing-options")
@@ -1411,14 +1484,86 @@ def _collect_live_frr(dev: dict, agent: str) -> str:
     return "\n\n".join(out)
 
 
+# Normalised vendor -> the show commands worth pulling for orchestrator context.
+_CLAB_SHOW = {
+    "srl": ["show interface", "show network-instance default protocols bgp neighbor"],
+    "eos": ["show interfaces", "show ip bgp summary"],
+    "frr": ["show interface", "show ip bgp summary"],
+}
+_DOCKER_BIN_CACHE = None
+
+
+def _clab_vkey(vendor: str) -> str:
+    v = (vendor or "").lower()
+    if "srl" in v or "nokia" in v:
+        return "srl"
+    if "eos" in v or "arista" in v or "ceos" in v:
+        return "eos"
+    return "frr"
+
+
+def _clab_argv(vkey: str, cmd: str) -> list:
+    if vkey == "srl":
+        return ["sr_cli", cmd]
+    if vkey == "eos":
+        return ["Cli", "-p", "15", "-c", cmd]
+    return ["vtysh", "-c", cmd]
+
+
+def _docker_bin() -> str:
+    """Resolve docker even under launchd's minimal PATH (no /usr/local/bin)."""
+    global _DOCKER_BIN_CACHE
+    if _DOCKER_BIN_CACHE:
+        return _DOCKER_BIN_CACHE
+    import shutil
+    found = shutil.which("docker")
+    if not found:
+        for p in ("/usr/local/bin/docker", "/opt/homebrew/bin/docker",
+                  os.path.expanduser("~/.docker/bin/docker"),
+                  "/Applications/Docker.app/Contents/Resources/bin/docker"):
+            if os.path.exists(p):
+                found = p
+                break
+    _DOCKER_BIN_CACHE = found or "docker"
+    return _DOCKER_BIN_CACHE
+
+
+def _collect_live_clab(dev: dict, agent: str) -> str:
+    """Pull live state from a containerlab node via `docker exec`, vendor-aware
+    (sr_cli / Cli / vtysh). Returns formatted output, or a short note per command
+    when the container is down / unreachable."""
+    import subprocess
+    container = dev.get("container") or ""
+    if not container:
+        return ""
+    vkey = _clab_vkey(dev.get("vendor"))
+    docker = _docker_bin()
+    out: list = []
+    for cmd in _CLAB_SHOW.get(vkey, _CLAB_SHOW["frr"]):
+        argv = [docker, "exec", container, *_clab_argv(vkey, cmd)]
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=12)
+            text = (r.stdout or "").strip() or (r.stderr or "").strip()
+            if text:
+                out.append(f"$ {cmd}\n{text[:1500]}")
+        except (OSError, subprocess.SubprocessError) as e:
+            out.append(f"# {cmd} unavailable: {e}")
+    return "\n\n".join(out)
+
+
 def _build_orchestrator_context(prompt: str, agent: str) -> str:
     devs = _find_devices_in_prompt(prompt)
     if not devs:
-        return ""
+        return _fleet_summary()  # ground general questions in the fleet inventory
     chunks: list[str] = []
     for d in devs:
         host = d.get("hostname", "?")
-        head = f"### Device: {host}  vendor={d.get('vendor','?')} os={d.get('os','?')} site={d.get('site','?')} live={bool(d.get('live'))}"
+        meta = " ".join(
+            f"{k}={d[k]}" for k in
+            ("vendor", "model", "role", "os", "site", "as_number", "container")
+            if d.get(k)
+        )
+        head = f"### Device: {host}  {meta} live={bool(d.get('live'))}"
         chunks.append(head)
         cfg_path = d.get("config")
         if cfg_path:
@@ -1433,7 +1578,12 @@ def _build_orchestrator_context(prompt: str, agent: str) -> str:
                     chunks.append(f"# config snippet ({cfg_path}) — first 60 lines\n" + "\n".join(cfg.splitlines()[:60]))
             except OSError as e:
                 chunks.append(f"# config read failed: {e}")
-        if d.get("live"):
+        container = d.get("container") or ""
+        if container.startswith("clab-"):
+            live = _collect_live_clab(d, agent)
+            if live.strip():
+                chunks.append(f"# live state (docker exec)\n{live}")
+        elif d.get("live"):
             chunks.append(f"# live state\n{_collect_live_frr(d, agent)}")
     return "\n\n".join(chunks)[:8000]  # hard cap to protect token budget
 
