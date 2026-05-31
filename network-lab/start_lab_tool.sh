@@ -57,6 +57,14 @@ echo "  Flask API: http://localhost:$DCN_PORT"
 echo "  Demo UI  : http://localhost:8080/"
 echo "═══════════════════════════════════════════════════"
 
+# Security: bind to loopback by default; set MVLAB_HOST=0.0.0.0 only to
+# deliberately expose the API on all interfaces (requires MVLAB_API_KEY).
+export MVLAB_HOST="${MVLAB_HOST:-127.0.0.1}"
+if [ "${MVLAB_HOST}" = "0.0.0.0" ]; then
+  echo "[WARNING] MVLAB_HOST=0.0.0.0 — API will be exposed on all interfaces." >&2
+  echo "[WARNING] Ensure MVLAB_API_KEY is set before proceeding." >&2
+fi
+
 # app.py lives in src/ and imports sibling modules (multivendor_extensions,
 # preflight_twin, preflight_run) — it MUST run with src/ as the working directory.
 source "$APP_DIR/venv_lab/bin/activate"

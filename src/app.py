@@ -8264,9 +8264,33 @@ def _clean_llm_response(text):
 
 
 def _llm_query_claude(system_prompt, user_prompt, max_tokens=500):
-    """Direct call to Anthropic Claude. Returns cleaned text or None."""
+    """Direct call to Anthropic Claude. Prefers the official `anthropic` SDK
+    (typed errors + built-in retries, consistent with the orchestrator's
+    _call_claude); falls back to a raw HTTP POST so the path still works if the
+    SDK isn't installed. Returns cleaned text or None."""
     if not ANTHROPIC_API_KEY:
         return None
+
+    # Preferred path: official anthropic SDK.
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        resp = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        text = "".join(getattr(b, "text", "") for b in resp.content).strip()
+        if text:
+            return _clean_llm_response(text)
+        return None
+    except ImportError:
+        pass  # SDK not installed — fall through to raw HTTP
+    except Exception:
+        pass  # SDK call failed — fall through to raw HTTP
+
+    # Fallback path: raw HTTP (no SDK dependency).
     try:
         r = _requests.post(
             "https://api.anthropic.com/v1/messages",
@@ -15391,9 +15415,87 @@ def _startup_self_check() -> None:
             "are FAIL-CLOSED (HTTP 503). Set MVLAB_API_KEY to enable them.",
             file=sys.stderr,
         )
+# ══════════════════════════════════════════════════════════════════════════════
+# ── AEGIS preflight blueprints (twin write-endpoints + pipeline run) ──────────
+#    twin endpoints operate ONLY on throwaway `clab-twin-…` containers, never prod.
+# ══════════════════════════════════════════════════════════════════════════════
+try:
+    from preflight_twin import make_blueprint as _preflight_twin_bp
+    from preflight_run import make_blueprint as _preflight_run_bp
+    app.register_blueprint(_preflight_twin_bp())
+    app.register_blueprint(_preflight_run_bp())
+    print("[AEGIS] Preflight registered — /api/preflight/twin/* + /api/preflight/run active")
+    _AEGIS_ENABLED = True
+except Exception as _aegis_err:  # noqa: BLE001 — never block app boot on AEGIS
+    print(f"[AEGIS] Preflight not available: {_aegis_err}")
+    _AEGIS_ENABLED = False
+
+
+# ── Phase 6: Event-Initiated Remediation (auto-remediate) ─────────────────────
+#    Anomaly -> matched runbook (src/runbooks/auto.yaml) -> risk-gated execution.
+#    Endpoints are always registered; the background loop is OPT-IN via
+#    MVLAB_AUTO_REMEDIATE_S (seconds). Fail-safe: never blocks app boot.
+try:
+    import auto_remediate as _ar
+
+    _AR_BASE = f"http://127.0.0.1:{int(os.environ.get('DCN_PORT', '5757'))}"
+
+    def _ar_headers():
+        k = os.environ.get("MVLAB_API_KEY", "")
+        h = {"Content-Type": "application/json"}
+        if k:
+            h["X-API-Key"] = k
+        return h
+
+    def _ar_trigger_closed_loop(hostname, proposed_change, timeout_s=30):
+        r = _requests.post(f"{_AR_BASE}/api/change/closed-loop",
+                           json={"hostname": hostname, "proposed_change": proposed_change,
+                                 "timeout_s": timeout_s}, headers=_ar_headers(), timeout=12)
+        return r.json()
+
+    def _ar_run_exec(host, command):
+        r = _requests.post(f"{_AR_BASE}/api/run", json={"hostname": host, "raw": command},
+                           headers=_ar_headers(), timeout=15)
+        return r.json() if r.ok else {"status": r.status_code, "error": r.text[:200]}
+
+    def _ar_blast(host):
+        try:
+            r = _requests.post(f"{_AR_BASE}/api/batfish/blast-radius", json={"device": host},
+                               headers=_ar_headers(), timeout=8)
+            return int((r.json().get("blast_radius") or {}).get("count", 0))
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def _ar_fetch_anomalies():
+        try:
+            r = _requests.get(f"{_AR_BASE}/api/anomaly/detect", timeout=10)
+            return r.json().get("anomalies", [])
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _ar_vendor_of(host):
+        for _d in DEVICES:
+            if _d.get("hostname") == host:
+                return _d.get("vendor_canonical", "")
+        return ""
+
+    _AUTO_REMEDIATOR = _ar.AutoRemediator(_ar.Deps(
+        trigger_closed_loop=_ar_trigger_closed_loop, run_exec=_ar_run_exec,
+        emit=_agent_emit, blast_radius=_ar_blast,
+        fetch_anomalies=_ar_fetch_anomalies, vendor_of=_ar_vendor_of))
+    app.register_blueprint(_ar.make_blueprint(_AUTO_REMEDIATOR))
+    _ar_loop_s = int(os.environ.get("MVLAB_AUTO_REMEDIATE_S", "0"))
+    if _ar_loop_s > 0:
+        _ar.start_loop(_AUTO_REMEDIATOR, _ar_loop_s)
+        print(f"[AUTO-REMEDIATE] 6 endpoints + loop ON (every {_ar_loop_s}s)")
+    else:
+        print("[AUTO-REMEDIATE] 6 endpoints registered (loop OFF — set MVLAB_AUTO_REMEDIATE_S=N)")
+except Exception as _ar_err:  # noqa: BLE001 — never block app boot
+    print(f"[AUTO-REMEDIATE] unavailable: {_ar_err}")
 
 
 if __name__ == "__main__":
+    import sys as _sys
     port = int(os.environ.get("DCN_PORT", "5757"))
     # Bind to loopback by default; require an explicit MVLAB_HOST=0.0.0.0 to expose
     # the privileged API on all interfaces.
