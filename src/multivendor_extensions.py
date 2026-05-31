@@ -1337,8 +1337,79 @@ def mv_eval_run():
 
 # ── Pydantic-AI orchestrator ───────────────────────────────────────────────────
 
+# Role/group terms → predicate over a (lowercased) hostname.
+_DEVICE_GROUPS = {
+    "spine": lambda h: h.startswith("spine"),
+    "spines": lambda h: h.startswith("spine"),
+    "leaf": lambda h: h.startswith("leaf"),
+    "leafs": lambda h: h.startswith("leaf"),
+    "leaves": lambda h: h.startswith("leaf"),
+    "host": lambda h: h.startswith("host"),
+    "hosts": lambda h: h.startswith("host"),
+    "core": lambda h: "core" in h,
+    "cores": lambda h: "core" in h,
+    "edge": lambda h: "edge" in h,
+    "edges": lambda h: "edge" in h,
+    "dist": lambda h: "dist" in h,
+    "distribution": lambda h: "dist" in h,
+}
+_FLEET_TERMS = (
+    "all devices", "all the devices", "every device", "everything",
+    "whole network", "entire network", "entire fabric", "the fabric",
+    "the fleet", "network-wide", "across the network", "all routers", "all switches",
+)
+_GROUP_CAP = 4  # bound live-SSH latency + token budget for group queries
+
+
+def _resolve_device_group(prompt: str) -> list[dict]:
+    """Map role/group terms (spines, leafs, core routers, all devices) to a
+    concrete device list. Used only when no exact hostname is named."""
+    p = prompt.lower()
+    if any(t in p for t in _FLEET_TERMS):
+        return _ALL_DEVICES[:_GROUP_CAP]
+    words = set("".join(c if c.isalnum() else " " for c in p).split())
+    matched: list[dict] = []
+    seen: set[str] = set()
+    for term, pred in _DEVICE_GROUPS.items():
+        if term not in words:
+            continue
+        for d in _ALL_DEVICES:
+            h = (d.get("hostname") or "").lower()
+            if h and h not in seen and pred(h):
+                matched.append(d)
+                seen.add(h)
+    return matched[:_GROUP_CAP]
+
+
+def _role_of(host: str) -> str:
+    h = (host or "").lower()
+    for r in ("spine", "leaf", "host", "core", "edge", "dist"):
+        if r in h:
+            return r
+    return "device"
+
+
+def _fleet_summary() -> str:
+    """Compact inventory grounding for general questions that name no device or
+    group — lets the model answer with fabric awareness instead of asking for data."""
+    if not _ALL_DEVICES:
+        return ""
+    by_role: dict[str, list[str]] = {}
+    for d in _ALL_DEVICES:
+        by_role.setdefault(_role_of(d.get("hostname", "")), []).append(d.get("hostname", "?"))
+    lines = [
+        f"### Fleet inventory — {len(_ALL_DEVICES)} devices (the prompt named no specific device)",
+        "For live per-device state, name a device (e.g. de-fra-core-01) or a group "
+        "(the spines, the leafs, the core routers, all devices).",
+    ]
+    for role, hosts in sorted(by_role.items()):
+        lines.append(f"- {role}: {', '.join(sorted(hosts))}")
+    return "\n".join(lines)[:4000]
+
+
 def _find_devices_in_prompt(prompt: str) -> list[dict]:
-    """Match any inventory hostname appearing in the prompt (longest first)."""
+    """Match inventory hostnames (exact, longest first); if none are named, fall
+    back to role/group terms (spines, leafs, core routers, all devices)."""
     p = prompt.lower()
     hits: list[dict] = []
     seen: set[str] = set()
@@ -1347,7 +1418,9 @@ def _find_devices_in_prompt(prompt: str) -> list[dict]:
         if h and h in p and h not in seen:
             hits.append(d)
             seen.add(h)
-    return hits[:3]  # cap at 3 to keep context compact
+    if hits:
+        return hits[:3]  # exact hostnames win; cap to keep context compact
+    return _resolve_device_group(prompt)  # else resolve role/group terms
 
 
 _BGP_HEADERS = ("router bgp", "protocols bgp", "policy-options", "routing-options")
@@ -1414,11 +1487,16 @@ def _collect_live_frr(dev: dict, agent: str) -> str:
 def _build_orchestrator_context(prompt: str, agent: str) -> str:
     devs = _find_devices_in_prompt(prompt)
     if not devs:
-        return ""
+        return _fleet_summary()  # ground general questions in the fleet inventory
     chunks: list[str] = []
     for d in devs:
         host = d.get("hostname", "?")
-        head = f"### Device: {host}  vendor={d.get('vendor','?')} os={d.get('os','?')} site={d.get('site','?')} live={bool(d.get('live'))}"
+        meta = " ".join(
+            f"{k}={d[k]}" for k in
+            ("vendor", "model", "role", "os", "site", "as_number", "container")
+            if d.get(k)
+        )
+        head = f"### Device: {host}  {meta} live={bool(d.get('live'))}"
         chunks.append(head)
         cfg_path = d.get("config")
         if cfg_path:
