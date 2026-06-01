@@ -7,6 +7,8 @@
 [![multivendor-ai-network-lab — live documentation](docs/assets/preview.png)](https://gesh75.github.io/multivendor-ai-network-lab/)
 
 > 🌐 **Live:** <https://gesh75.github.io/multivendor-ai-network-lab/> — an animated single-page guide: architecture diagrams, data flow, tech stack, and quickstart.
+>
+> 🗂️ Part of the **[gesh75 documentation hub](https://gesh75.github.io/)** — all my network & AI engineering project docs in one place.
 
 
 > **🛰 Phase 4 (May 2026) — the closed-loop phase:** Health Gate (RFC 6241 §8.4
