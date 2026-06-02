@@ -355,7 +355,7 @@ def make_blueprint(remediator: AutoRemediator, enable_simulate: Optional[bool] =
 
     @bp.route("/api/auto-remediate/queue", methods=["GET"])
     def _queue():
-        return jsonify({"actions": remediator.recent(int(request.args.get("limit", 50)))})
+        return jsonify({"actions": remediator.recent(int(v) if (v := str(request.args.get("limit", "50"))).isdigit() else 50)})
 
     @bp.route("/api/auto-remediate/runbook", methods=["GET"])
     def _runbooks():

@@ -165,6 +165,19 @@ def test_endpoints():
     assert c.get("/api/auto-remediate/queue").get_json()["actions"][0]["runbook"] == "bgp_flap_reset"
 
 
+def test_queue_limit_non_int_falls_back_not_500():
+    """A garbled ?limit= must fall back to the default, never 500 the open GET route."""
+    from flask import Flask
+    deps, _, _ = make_deps(vendor="frr")
+    rem = ar.AutoRemediator(deps)
+    app = Flask(__name__)
+    app.register_blueprint(ar.make_blueprint(rem, enable_simulate=False))
+    c = app.test_client()
+    r = c.get("/api/auto-remediate/queue?limit=notanint")
+    assert r.status_code == 200
+    assert isinstance(r.get_json()["actions"], list)
+
+
 # ── security: injection guard + gated debug hook ────────────────────────────────
 def test_rejects_injection():
     deps, calls, _ = make_deps(vendor="frr")
