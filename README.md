@@ -11,6 +11,18 @@
 > 🗂️ Part of the **[gesh75 documentation hub](https://gesh75.github.io/)** — all my network & AI engineering project docs in one place.
 
 
+> **⚡ Phase 6 (Jun 2026) — event-initiated remediation:** detected anomalies now
+> auto-trigger the closed-loop change pipeline, **risk-gated** — LOW auto-executes,
+> MEDIUM/HIGH queue for one-click approval, CRITICAL pages out and **never auto-acts**.
+> Blast-radius BFS tier escalation · confirmed-commit (RFC 6241 §8.4) auto-revert ·
+> 8-runbook catalog · 6 endpoints · auto-remediation queue UI · 5 new MCP tools
+> (**~68 total**) · **34/34 tests**. Release:
+> [**v0.6.0**](https://github.com/gesh75/multivendor-ai-network-lab/releases/tag/v0.6.0).
+>
+> **🎯 Phase 5 (May 2026) — COMPLETE:** RAG · gNMI streaming (SRL) · ADTK anomaly
+> detection · 6-stage closed-loop pipeline · predictive forecast · 68 MCP tools ·
+> **41 PASS / 0 FAIL** stress test.
+>
 > **🛰 Phase 4 (May 2026) — the closed-loop phase:** Health Gate (RFC 6241 §8.4
 > confirmed-commit) · NetBox SoT drift detector · Auto-Remediate proposal state
 > machine · Auto-Postmortem markdown writer · 9,802-command CLI BM25 retrieval ·
