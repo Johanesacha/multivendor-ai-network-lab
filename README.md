@@ -10,6 +10,14 @@
 >
 > 🗂️ Part of the **[gesh75 documentation hub](https://gesh75.github.io/)** — all my network & AI engineering project docs in one place.
 
+## 🖥️ Fabric operations portal
+
+[![Multi-vendor EVPN-VXLAN fabric operations portal](docs/assets/portal.png)](https://gesh75.github.io/multivendor-ai-network-lab/portal.html)
+
+> 🌐 **[Open the live portal →](https://gesh75.github.io/multivendor-ai-network-lab/portal.html)** — the CLOS EVPN-VXLAN fabric (Nokia SR Linux · Arista cEOS · FRR): topology, Mermaid L1/L3/BGP/EVPN diagrams, per-vendor device configs, a 30/30 connectivity matrix, and design decisions. The `FABRIC` badge is live against a local backend, so it reads `FABRIC ?` on the public web.
+>
+> 🛠️ **Build it yourself:** the step-by-step **[Build Your Own Docker Lab](docs/BUILD_YOUR_OWN_LAB.md)** guide (macOS & Linux) stands the whole fabric up — `docker-compose` FRR backbone + the containerlab EVPN fabric, with the `--pid host` recipe and image setup.
+
 
 > **⚡ Phase 6 (Jun 2026) — event-initiated remediation:** detected anomalies now
 > auto-trigger the closed-loop change pipeline, **risk-gated** — LOW auto-executes,
