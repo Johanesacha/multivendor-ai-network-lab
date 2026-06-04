@@ -90,7 +90,7 @@ hooks for Cisco IOS-XE / NX-OS.
 | 📦 **TOON serializer** — ~60% smaller than JSON for tabular API payloads | `src/toon_serializer.py` | NetClaw |
 | 🛡️ **Auto-remediation runbooks** — YAML playbooks (BGP/OSPF/Interface/ACL) | `src/runbooks/` | NetClaw |
 | 🔍 **CVE scanner** — static `(vendor, OS version)` lookup over fleet | `src/cve_db.json`, `/api/mv/cve` | NetClaw |
-| ⚙️ **MCP server** — 49 tools so Claude Code can call any capability | `src/mcp_dcn_server.py` | coding-networks-blog |
+| ⚙️ **MCP server** — 69 tools so Claude Code can call any capability | `src/mcp_dcn_server.py` | coding-networks-blog |
 | 🩺 **Single-device health snapshot** — `GET /api/health/<hostname>` → one JSON doc with BGP/OSPF/interfaces/routes/mem/CPU in parallel | `src/health.py`, [`docs/HEALTH_ENDPOINT.md`](docs/HEALTH_ENDPOINT.md) | what_a_NOS_could_be |
 
 ## How does this compare to RANCID, Oxidized, SolarWinds NCM, Forward Networks, NetSpectraAI?
@@ -122,7 +122,7 @@ public Internet routing data — useful for realism in BGP demos.
 ## 🏛️ Architecture
 
 The lab is a closed loop: humans (web UI / Telegram) and AI agents (Claude Code
-over a 64-tool MCP server) drive a Flask monolith on `:5757` whose core is a
+over a 69-tool MCP server) drive a Flask monolith on `:5757` whose core is a
 vendor-neutral driver layer; changes flow through a governed
 **Predict → Blast Radius → Health Gate → Watch → Verify** pipeline with
 auto-rollback, while telemetry streams to InfluxDB/Grafana.
@@ -130,7 +130,7 @@ auto-rollback, while telemetry streams to InfluxDB/Grafana.
 ```mermaid
 flowchart TB
     operator(["NOC Operator - web UI and Telegram"]):::actor
-    agents(["Claude Code - via MCP, 64 tools"]):::actor
+    agents(["Claude Code - via MCP, 69 tools"]):::actor
 
     system{{"multivendor-ai-network-lab - Flask :5757 closed-loop ops"}}:::core
 
@@ -187,7 +187,7 @@ Without a key, the orchestrator runs in deterministic offline mode.
 
 ## API surface
 
-20 endpoints under `/api/mv/*` — see [`network-lab/MULTIVENDOR_LAB.md`](network-lab/MULTIVENDOR_LAB.md)
+55 endpoints under `/api/mv/*` — see [`network-lab/MULTIVENDOR_LAB.md`](network-lab/MULTIVENDOR_LAB.md)
 for the full table, request/response shapes, and curl examples.
 
 The 12 Phase 3 endpoints:
@@ -237,8 +237,8 @@ multivendor-ai-network-lab/
 │   ├── gait_audit.py
 │   ├── toon_serializer.py
 │   ├── vendor_translator.py
-│   ├── mcp_dcn_server.py            # MCP server (49 tools)
-│   ├── runbooks/             # 4 YAML auto-remediation playbooks
+│   ├── mcp_dcn_server.py            # MCP server (69 tools)
+│   ├── runbooks/             # 5 YAML auto-remediation playbooks
 │   ├── scenarios.json        # 10 incident scenarios
 │   ├── cve_db.json           # static CVE lookup
 │   └── requirements.txt

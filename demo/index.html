@@ -5196,7 +5196,30 @@ async function loadHealthAll(){
   const _labHosts=['de-fra-core-01','de-fra-core-02','uk-lon-core-01','nl-ams-core-01','us-nyc-core-01','de-fra-edge-01','uk-lon-edge-01','nl-ams-edge-01','uk-lon-dist-01','de-fra-dist-01'];
   const payload=site?{site}:{hostnames:_labHosts};
   const r=await apiFetch('/api/device/health-all',{method:'POST',body:JSON.stringify(payload),timeout:60000});
-  if(!r.ok){out.textContent='Error: '+((r.data&&r.data.error)||'timeout or unreachable'); return;}
+  if(!r.ok){
+    // Health-all runs a read-only `show` collection across the fleet and is gated
+    // behind the backend X-API-Key (every mutating/resource-consuming POST is). This
+    // shareable demo UI carries no key, so degrade gracefully instead of "Error: unauthorized".
+    const gated = r.data && (r.data.error==='unauthorized'
+      || r.data.error==='server not configured for privileged operations');
+    if(gated){
+      out.innerHTML='';
+      const note=document.createElement('div'); note.className='rcard';
+      note.style.padding='14px 16px'; note.style.lineHeight='1.55';
+      note.innerHTML='🔒 <b>Live console required.</b> Per-device health cards run a read-only '
+        +'<code>show</code> collection across the fleet, gated behind the backend X-API-Key '
+        +'(<code>POST /api/device/health-all</code>). This shareable demo carries no key, so the '
+        +'cards are disabled here — every other panel (drift, BGP, LLM, topology, compliance) is live. '
+        +'For this panel, use the same-origin console on <code>localhost:5757</code> or run with '
+        +'<code>MVLAB_API_KEY</code> set.';
+      out.appendChild(note);
+      if(statusEl) statusEl.textContent='gated · live console required';
+      return;
+    }
+    out.textContent='Error: '+((r.data&&r.data.error)||'timeout or unreachable');
+    if(statusEl) statusEl.textContent='error';
+    return;
+  }
   /* Fix: backend returns "devices" array, not "results" */
   const results=r.data.devices||[];
   out.textContent='';

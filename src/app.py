@@ -77,11 +77,17 @@ REPO_ROOT = Path(os.environ.get("MVLAB_REPO_ROOT") or Path(__file__).resolve().p
 
 # ── CORS — scope to the dashboard origin(s), never '*' ────────────────────────
 # The dashboard is served same-origin by this app, so CORS is only needed for the
-# localhost dev origins. Override with a comma-separated MVLAB_CORS_ORIGINS list.
+# localhost dev origins. The v4.0 demo UI is served as a static bundle from a
+# *separate* origin (http.server on :8080, launchd `com.geshlab.demo-ui`); it must
+# be whitelisted here or the browser silently blocks its read-only API fetches and
+# the UI falls back to "Demo Mode" / "LLM: offline" even though the backend is up.
+# Loopback origins only — NEVER '*'. Override with a comma-separated
+# MVLAB_CORS_ORIGINS list (e.g. to add a LAN host for a shared demo).
 _CORS_ORIGINS = [
     o.strip() for o in os.environ.get(
         "MVLAB_CORS_ORIGINS",
-        "http://localhost:5757,http://127.0.0.1:5757",
+        "http://localhost:5757,http://127.0.0.1:5757,"
+        "http://localhost:8080,http://127.0.0.1:8080",
     ).split(",") if o.strip()
 ]
 CORS(app, resources={r"/api/*": {"origins": _CORS_ORIGINS}})
@@ -98,12 +104,27 @@ MVLAB_API_KEY = os.environ.get("MVLAB_API_KEY", "")
 # path is explicitly listed below (e.g. a GET that triggers a privileged action).
 _PRIVILEGED_GET_PREFIXES: tuple[str, ...] = ()
 
+# Sim-tier AEGIS PreFlight endpoints are deterministic, touch NOTHING on the live
+# network (the pipeline runs against a SimulatorBackend / renders an already-produced
+# evidence bundle), and mirror the open-by-design OSS `aegis/serve.py` demo. They stay
+# open so the same-origin PreFlight UI works with zero friction. The privileged paths
+# that DO consume resources or mutate prod stay gated:
+#   • /api/preflight/run live-mode (twin + LLM)  -> re-checked inside the handler
+#   • /api/preflight/twin/*  (spawns containerlab) -> NOT listed here
+#   • /api/preflight/promote (prod connector)      -> NOT listed here
+_OPEN_POST_PATHS: frozenset[str] = frozenset({
+    "/api/preflight/run",
+    "/api/preflight/evidence/pdf",
+})
+
 
 def _is_protected_request() -> bool:
     """True if the current request must present a valid API key."""
     method = request.method.upper()
     if method in ("GET", "HEAD", "OPTIONS"):
         return any(request.path.startswith(p) for p in _PRIVILEGED_GET_PREFIXES)
+    if request.path in _OPEN_POST_PATHS:
+        return False
     # POST/PUT/PATCH/DELETE — every mutating call is privileged.
     return True
 
