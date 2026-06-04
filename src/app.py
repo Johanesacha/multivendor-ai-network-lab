@@ -81,13 +81,16 @@ REPO_ROOT = Path(os.environ.get("MVLAB_REPO_ROOT") or Path(__file__).resolve().p
 # *separate* origin (http.server on :8080, launchd `com.geshlab.demo-ui`); it must
 # be whitelisted here or the browser silently blocks its read-only API fetches and
 # the UI falls back to "Demo Mode" / "LLM: offline" even though the backend is up.
+# The ops portal (static bundle on :8099, launchd `com.geshlab.portal`) is likewise
+# a separate origin — its live fabric-status badge reads /api/mv/clab-status here.
 # Loopback origins only — NEVER '*'. Override with a comma-separated
 # MVLAB_CORS_ORIGINS list (e.g. to add a LAN host for a shared demo).
 _CORS_ORIGINS = [
     o.strip() for o in os.environ.get(
         "MVLAB_CORS_ORIGINS",
         "http://localhost:5757,http://127.0.0.1:5757,"
-        "http://localhost:8080,http://127.0.0.1:8080",
+        "http://localhost:8080,http://127.0.0.1:8080,"
+        "http://localhost:8099,http://127.0.0.1:8099",
     ).split(",") if o.strip()
 ]
 CORS(app, resources={r"/api/*": {"origins": _CORS_ORIGINS}})
@@ -13261,30 +13264,81 @@ _HEALTH_CMDS: dict[str, dict[str, str]] = {
 
 
 def _parse_frr_health(raw: dict[str, str]) -> dict:
-    """Extract numeric metrics from FRR health command outputs."""
+    """Extract metrics from FRR health command outputs.
+
+    Robust to BOTH the JSON form (vtysh ``... json`` — emitted by the docker-exec
+    path) and the columnar TEXT form (SSH path). The legacy text-only parser broke
+    because FRR's ``show bgp summary`` rows end with a free-text neighbor
+    *description*, so the old "eight trailing integers" regex matched nothing and
+    metrics came back empty. We parse JSON first (mirrors src/health.py) and fall
+    back to text. Back-compat keys ``bgp_peers``/``ospf_neighbors`` are preserved
+    for renderHealthCard(); richer ``*_established``/``*_total``/``ospf_full`` are
+    added alongside.
+    """
     metrics: dict = {}
 
-    mem_text = raw.get("memory", "")
-    m = re.search(r"Total:\s+(\d+)", mem_text)
-    if m:
-        metrics["mem_total_kb"] = int(m.group(1))
-    m = re.search(r"Used:\s+(\d+)", mem_text)
-    if m:
-        metrics["mem_used_kb"] = int(m.group(1))
+    # ── BGP — established + total peers ──────────────────────────────────────
+    bgp_text = raw.get("bgp", "") or ""
+    established = total = None
+    try:
+        uni = (json.loads(bgp_text).get("ipv4Unicast")
+               or json.loads(bgp_text).get("ipv6Unicast") or {})
+        peers = uni.get("peers", {}) or {}
+        total = uni.get("totalPeers", uni.get("peerCount", len(peers)))
+        established = sum(1 for p in peers.values()
+                          if str(p.get("state", "")).lower() == "established")
+    except (ValueError, AttributeError):
+        # text fallback: data rows start with a neighbor IP; a numeric
+        # State/PfxRcd column (parts[9]) means Established, a word means down.
+        est = tot = 0
+        for line in bgp_text.splitlines():
+            parts = line.split()
+            if len(parts) < 10 or not re.match(r"^\d+\.\d+\.\d+\.\d+$", parts[0]):
+                continue
+            tot += 1
+            if parts[9].isdigit():
+                est += 1
+        if tot:
+            established, total = est, tot
+    if established is not None:
+        metrics["bgp_peers"] = established          # back-compat (established count)
+        metrics["bgp_established"] = established
+        metrics["bgp_total"] = total
 
-    cpu_text = raw.get("cpu", "")
+    # ── OSPF — neighbor count + Full adjacencies ─────────────────────────────
+    ospf_text = raw.get("ospf", "") or ""
+    neighbors = full = None
+    try:
+        nbrs = json.loads(ospf_text).get("neighbors", {}) or {}
+        flat: list = []
+        for v in nbrs.values():           # FRR: {id: {..}} or {id: [{..}, ..]}
+            flat.extend(v if isinstance(v, list) else [v])
+        neighbors = len(flat)
+        full = sum(1 for n in flat
+                   if "full" in str(n.get("converged", n.get("state", ""))).lower())
+    except (ValueError, AttributeError):
+        rows = [l for l in ospf_text.splitlines()
+                if re.match(r"^\s*\d+\.\d+\.\d+\.\d+\s", l)]
+        neighbors = len(rows)
+        full = sum(1 for l in rows if "full" in l.lower())
+    if neighbors is not None:
+        metrics["ospf_neighbors"] = neighbors       # back-compat
+        metrics["ospf_full"] = full
+
+    # ── Memory / CPU — best-effort (many FRR builds expose no clean total) ───
+    mem_text = raw.get("memory", "") or ""
+    m = re.search(r"Total heap allocated:\s+([\d,]+)", mem_text)
+    if m:
+        metrics["mem_total_kb"] = int(m.group(1).replace(",", "")) // 1024
+    m = re.search(r"Used ordinary blocks:\s+([\d,]+)", mem_text)
+    if m:
+        metrics["mem_used_kb"] = int(m.group(1).replace(",", "")) // 1024
+
+    cpu_text = raw.get("cpu", "") or ""
     m = re.search(r"(\d+(?:\.\d+)?)\s*%\s*(?:CPU|cpu|user)", cpu_text)
     if m:
         metrics["cpu_pct"] = float(m.group(1))
 
-    bgp_text = raw.get("bgp", "")
-    established = len(re.findall(r"^\S.*?\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+$",
-                                 bgp_text, re.M))
-    metrics["bgp_peers"] = established
-
-    ospf_text = raw.get("ospf", "")
-    metrics["ospf_neighbors"] = len([l for l in ospf_text.splitlines()
-                                     if re.search(r'\d+\.\d+\.\d+\.\d+', l)])
     return metrics
 
 
@@ -13372,7 +13426,11 @@ def api_device_health_all():
             for key, _frr_cmd in cmd_set.items():
                 try:
                     if vendor in ("frr", ""):
-                        ext = ["docker", "exec", container, "vtysh", "-c", _frr_cmd]
+                        # FRR vtysh emits clean JSON for bgp/ospf — far more robust
+                        # than scraping columnar text whose rows end with a free-text
+                        # description. _parse_frr_health parses JSON-first w/ text fallback.
+                        _vc = f"{_frr_cmd} json" if key in ("bgp", "ospf") else _frr_cmd
+                        ext = ["docker", "exec", container, "vtysh", "-c", _vc]
                     elif vendor in ("arista", "arista-eos", "eos"):
                         eos_cmd = (_frr_cmd
                                    .replace("show ip bgp summary", "show ip bgp summary")
@@ -13398,7 +13456,11 @@ def api_device_health_all():
                     raw[key] = "ERROR: docker exec timed out"
                 except Exception as exc:  # noqa: BLE001
                     raw[key] = f"ERROR: {exc}"
-            metrics = _parse_frr_health(raw) if vendor == "frr" else {}
+            # Parse whenever the FRR vtysh branch ran. NOTE: the live docker-compose
+            # FRR lab devices carry vendor=None (-> ""), so gating on vendor=="frr"
+            # silently dropped their metrics even though the raw vtysh output was
+            # collected. Gate on the same predicate as the collection branch above.
+            metrics = _parse_frr_health(raw) if vendor in ("frr", "") else {}
             return {"hostname": dev["hostname"], "type": dtype, "ip": ip,
                     "vendor": vendor, "container": container,
                     "raw": raw, "metrics": metrics}

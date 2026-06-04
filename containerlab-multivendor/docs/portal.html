@@ -851,6 +851,41 @@ function loadConfig(path, name) {
     .then(text => { content.textContent = text; })
     .catch(() => { content.textContent = 'Could not load file. Open directly:\nconfigs/' + path; });
 }
+
+// Live fabric-status badge — replaces the formerly hardcoded "FABRIC UP" with a
+// real reading from the :5757 API (/api/mv/clab-status). Cross-origin (portal is
+// :8099), so the backend must whitelist :8099 in _CORS_ORIGINS; if the API is
+// unreachable or CORS-blocked we show "FABRIC ?" rather than a misleading green.
+(function () {
+  var API = 'http://127.0.0.1:5757';
+  var el = document.getElementById('fabric-status');
+  if (!el) return;
+  function refresh() {
+    fetch(API + '/api/mv/clab-status', { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (d) {
+        var nodes = d.nodes || {};
+        var names = Object.keys(nodes);
+        var healthy = names.filter(function (n) { return nodes[n].healthy; }).length;
+        var bgp = names.reduce(function (s, n) { return s + (nodes[n].bgp_up || 0); }, 0);
+        var stale = !!d.stale;
+        var live = names.length > 0 && healthy > 0 && !stale;
+        el.className = 'status ' + (live ? 'up' : 'down');
+        el.textContent = live
+          ? ('FABRIC UP · ' + healthy + '/' + names.length + ' · ' + bgp + ' BGP')
+          : (stale ? 'FABRIC STALE' : 'FABRIC DOWN · ' + healthy + '/' + names.length);
+        el.title = 'clab-status: healthy ' + healthy + '/' + names.length + ', ' + bgp
+          + ' BGP up, stale=' + stale + ', age ' + Math.round(d.age_sec || 0) + 's';
+      })
+      .catch(function (e) {
+        el.className = 'status down';
+        el.textContent = 'FABRIC ?';
+        el.title = 'Live status unavailable (' + e.message + '). Is the :5757 API up and :8099 CORS-allowed?';
+      });
+  }
+  refresh();
+  setInterval(refresh, 20000);
+})();
 </script>
 </body>
 </html>
