@@ -181,7 +181,7 @@ _FRR_SSH_KEY = os.environ.get("DCN_FRR_SSH_KEY") or str(REPO_ROOT / "network-lab
 _FRR_SSH_USER = "root"
 # PKCS#11 config (YubiKey)
 PKCS11_LIB   = os.environ.get("DCN_PKCS11_LIB",  "/usr/local/lib/libykcs11.dylib")
-PKCS11_PIN   = os.environ.get("DCN_PKCS11_PIN",   "750100")
+PKCS11_PIN   = os.environ.get("DCN_PKCS11_PIN")   # required in pkcs11 mode; no default — never hardcode a PIN in a public repo
 
 # ── PKCS#11 YubiKey key (singleton, initialised on first use) ─────────────────
 _pkcs11_pkey = None   # PKCS11ECDSAKey instance
@@ -206,6 +206,8 @@ def _pkcs11_init():
     slots = lib.getSlotList(tokenPresent=True)
     if not slots:
         raise RuntimeError("No YubiKey PKCS#11 token found")
+    if not PKCS11_PIN:
+        raise RuntimeError("DCN_PKCS11_PIN is not set — export it to use pkcs11/YubiKey SSH mode")
     _pkcs11_session = lib.openSession(slots[0], PyKCS11.CKF_SERIAL_SESSION)
     _pkcs11_session.login(PKCS11_PIN)
 
