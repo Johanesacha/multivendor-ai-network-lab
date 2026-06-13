@@ -110,6 +110,36 @@ def fill_template(text: str, ctx: dict) -> tuple[str, list[str]]:
     return _PLACEHOLDER.sub(repl, text or ""), missing
 
 
+def exec_failed(res) -> bool:
+    """True if a side-effect result (run_exec / trigger_closed_loop) signals failure.
+
+    Audit-integrity guard: the auto-remediation engine MUST NOT record a runbook as
+    `executed` when the underlying call actually failed. run_exec returns an error
+    dict (it does NOT raise) when /api/run answers non-2xx (e.g. a 403 because the
+    read-only guard blocked the command), so we inspect the returned dict for the
+    standard failure markers instead of relying on exceptions alone.
+    """
+    if not isinstance(res, dict):
+        return False
+    # Explicit failure flag from run_exec, or an HTTP error status it captured.
+    if res.get("ok") is False or res.get("error"):
+        return True
+    if res.get("success") is False:
+        return True
+    status = res.get("status")
+    if isinstance(status, int) and not (200 <= status < 300):
+        return True
+    return False
+
+
+def _exec_error(res) -> str:
+    """Best-effort short error string from a failed exec result, for the audit log."""
+    if isinstance(res, dict):
+        return str(res.get("error") or res.get("detail")
+                   or f"status={res.get('status')}" or "exec failed")[:200]
+    return "exec failed"
+
+
 def escalate_tier(floor: str, blast_count: int) -> str:
     """Blast-radius escalation: never below the runbook floor."""
     bump = 1 if blast_count >= 3 else 0
@@ -252,10 +282,21 @@ class AutoRemediator:
                                             timeout_s=self.default_timeout)
             else:                                          # exec | collect
                 res = d.run_exec(host=rec["host"], command=rec["payload"])
+            # Audit integrity: a non-2xx / error / success:false result means the
+            # side effect did NOT happen (e.g. /api/run returned 403 because the
+            # read-only guard blocked the command). NEVER log it as "executed".
+            if exec_failed(res):
+                d.gait_log({"actor": "auto-remediate", "verdict": "failed",
+                            "runbook": rec["runbook"], "host": rec["host"],
+                            "tier": rec["risk_tier"], "error": _exec_error(res)})
+                return "execute_failed", res
             d.gait_log({"actor": "auto-remediate", "verdict": "executed",
                         "runbook": rec["runbook"], "host": rec["host"], "tier": rec["risk_tier"]})
             return "auto_executed", res
         except Exception as exc:                           # noqa: BLE001 — surface, never crash the loop
+            d.gait_log({"actor": "auto-remediate", "verdict": "failed",
+                        "runbook": rec["runbook"], "host": rec["host"],
+                        "tier": rec["risk_tier"], "error": str(exc)})
             return "execute_failed", {"error": str(exc)}
 
     # -- approval workflow -------------------------------------------------------

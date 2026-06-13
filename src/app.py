@@ -807,6 +807,37 @@ def is_command_blocked(cmd: str) -> bool:
             any(s in c for s in CMD_BLOCKED_CONTAINS))
 
 
+# ── Auto-remediation sanctioned exec allowlist ──────────────────────────────────
+# The interactive /api/run guard denies `clear ...` for normal users (read-only
+# mode). The auto-remediation engine, however, ships LOW-tier runbooks whose
+# operational, NON-CONFIG commands (e.g. `clear bgp * soft`, `clear counters et1`)
+# are meant to auto-execute. Those commands are already constrained by the
+# runbook catalog + valid_field() placeholder validation in src/auto_remediate.py,
+# so when (and only when) an authenticated caller sets `runbook_exec: true` on
+# /api/run, we permit the EXACT operational prefixes below — never `configure`,
+# `set`, `delete`, `commit`, `request system`, `file`, etc. This keeps the
+# interactive guard fully intact for normal users (who never send the flag).
+CMD_RUNBOOK_EXEC_ALLOWED_PREFIXES = (
+    "clear bgp ", "clear counters", "clear ip bgp ", "clear ipv6 bgp ",
+)
+
+
+def is_runbook_exec_allowed(cmd: str) -> bool:
+    """True if `cmd` is an operational, non-config command a runbook may auto-exec.
+
+    Defense-in-depth: even with the runbook_exec flag set, the command must match
+    a known-safe operational prefix AND must not contain any blocked CONTAINS
+    token (e.g. '| save'). Anything not on the allowlist falls back to the normal
+    blocked-command behaviour.
+    """
+    if not cmd:
+        return False
+    c = cmd.strip().lower()
+    if any(s in c for s in CMD_BLOCKED_CONTAINS):
+        return False
+    return any(c.startswith(p) for p in CMD_RUNBOOK_EXEC_ALLOWED_PREFIXES)
+
+
 def _bounded_insert(d: dict, key, value, max_size: int) -> None:
     """Insert into d with FIFO eviction once len(d) exceeds max_size.
 
@@ -1271,10 +1302,17 @@ def run_command():
     if not ip:
         return jsonify({"success": False, "error": "Missing ip"}), 400
 
-    # Safety: block write/destructive commands (read-only mode)
+    # Safety: block write/destructive commands (read-only mode).
+    # Exception: an authenticated auto-remediation caller may set runbook_exec=true
+    # to run an allowlisted OPERATIONAL (non-config) command — e.g. a LOW-tier
+    # `clear bgp * soft` / `clear counters {interface}` runbook. The request is
+    # already past the X-API-Key gate, and the command is constrained to the
+    # CMD_RUNBOOK_EXEC_ALLOWED_PREFIXES allowlist; everything else stays blocked.
+    runbook_exec = bool(data.get("runbook_exec"))
     if raw:
         if is_command_blocked(raw):
-            return jsonify({"success": False, "error": "BLOCKED: write/destructive commands not allowed (read-only mode)"}), 403
+            if not (runbook_exec and is_runbook_exec_allowed(raw)):
+                return jsonify({"success": False, "error": "BLOCKED: write/destructive commands not allowed (read-only mode)"}), 403
         command = raw
     elif cmd_key:
         command = COMMANDS.get(dtype, {}).get(cmd_key)
@@ -15539,9 +15577,22 @@ try:
         return r.json()
 
     def _ar_run_exec(host, command):
-        r = _requests.post(f"{_AR_BASE}/api/run", json={"hostname": host, "raw": command},
+        # runbook_exec=true lets the (already API-key-authenticated) auto-remediation
+        # engine run an allowlisted operational command (e.g. `clear bgp * soft`) that
+        # the interactive read-only guard would otherwise block. See is_runbook_exec_allowed.
+        r = _requests.post(f"{_AR_BASE}/api/run",
+                           json={"hostname": host, "raw": command, "runbook_exec": True},
                            headers=_ar_headers(), timeout=15)
-        return r.json() if r.ok else {"status": r.status_code, "error": r.text[:200]}
+        if not r.ok:
+            # Surface non-2xx (e.g. 403 blocked) as an explicit error so the
+            # AutoRemediator records the action as FAILED — never a false "executed".
+            return {"ok": False, "status": r.status_code, "error": r.text[:200]}
+        body = r.json()
+        # /api/run returns HTTP 200 with {"success": false, ...} on device-level
+        # failure; treat that as a failure too, not a silent success.
+        if isinstance(body, dict) and body.get("success") is False:
+            return {"ok": False, "status": r.status_code, **body}
+        return body
 
     def _ar_blast(host):
         try:
