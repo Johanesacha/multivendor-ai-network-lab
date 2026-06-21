@@ -1,0 +1,115 @@
+{
+  "_meta": {
+    "purpose": "Candidate command-reference sources to add to multivendor-cli-configurator (commands.json).",
+    "target_schema": ["vendor", "os", "role", "cat", "title", "cmd", "desc"],
+    "pipeline": "Drop downloaded file into scripts/sources/, run parse_vendor_docs.py --source <id>, then merge + clean_titles + audit_data_quality, then push to main.",
+    "license_note": "Extract COMMAND SYNTAX only (factual). Do not redistribute book prose. Keep scripts/sources/ gitignored, as the repo already does.",
+    "compiled": "2026-06-21"
+  },
+  "sources": [
+    {
+      "id": "cisco_ios_mcl",
+      "priority": "high",
+      "vendor": "Cisco",
+      "os": "ios",
+      "default_role": "router",
+      "title": "Cisco IOS Master Command List (All Releases)",
+      "url": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/mcl/allreleasemcl/all-book.pdf",
+      "format": "pdf",
+      "est_commands": "10000+",
+      "gap": "Biggest single win. Cisco currently ~4,409 from the ENCOR/ENARSI portable guide; the MCL is the full command surface.",
+      "parse_notes": "Entries are 'command-name' headers followed by Syntax / Description / Command Modes blocks. Category from the functional area in the command name (e.g. 'ip ospf' -> OSPF, 'switchport' -> VLAN). Dedup against existing Cisco records by cmd."
+    },
+    {
+      "id": "nokia_sros_7750",
+      "priority": "high",
+      "vendor": "Nokia",
+      "os": "sros",
+      "default_role": "router",
+      "title": "Nokia 7750 SR OS — Basic System Configuration Guide (CLI Usage + command trees)",
+      "url": "https://documentation.nokia.com/html/0_add-h-f/93-0070-10-01/7750_SR_OS_System_Basics_Guide/CLI%20Usage.pdf",
+      "format": "pdf",
+      "est_commands": "1500+",
+      "gap": "NEW NOS surface. Project only has Nokia SR Linux (1,053); SR OS classic/MD-CLI is uncovered. Register as a distinct os='sros'.",
+      "parse_notes": "SR OS uses a hierarchical context tree (configure router bgp ...). Flatten the command tree into full-path commands. Keep classic-CLI and MD-CLI variants tagged if both appear."
+    },
+    {
+      "id": "nokia_srlinux_cli_plugin",
+      "priority": "high",
+      "vendor": "Nokia",
+      "os": "srlinux",
+      "default_role": "switch",
+      "title": "Nokia SR Linux CLI Plug-in Guide (24.10)",
+      "url": "https://documentation.nokia.com/srlinux/24-10/books/pdf/CLI_Plug-in_Guide_24.10.pdf",
+      "format": "pdf",
+      "est_commands": "800+",
+      "gap": "Deepens shallow SR Linux coverage (1,053) and matches the AI-lab EVPN fabric vendor.",
+      "parse_notes": "Declarative CLI: 'enter candidate' / set / 'commit now'. Capture full set-paths. info-from-state show commands -> Troubleshooting category."
+    },
+    {
+      "id": "nokia_srlinux_config_basics",
+      "priority": "high",
+      "vendor": "Nokia",
+      "os": "srlinux",
+      "default_role": "switch",
+      "title": "Nokia SR Linux Configuration Basics (21.3)",
+      "url": "https://documentation.nokia.com/cgi-bin/dbaccessfilename.cgi/3HE16819AAAATQZZA01_V1_SR%20Linux%20R21.3%20Configuration%20Basics.pdf",
+      "format": "pdf",
+      "est_commands": "400+",
+      "gap": "Foundational set/commit/show patterns; pairs with the CLI Plug-in Guide.",
+      "parse_notes": "Same declarative grammar as the plug-in guide. Merge then dedup by cmd against srlinux records."
+    },
+    {
+      "id": "cisco_ios_lanswitch_cref",
+      "priority": "medium",
+      "vendor": "Cisco",
+      "os": "ios",
+      "default_role": "switch",
+      "title": "Cisco IOS LAN Switching Command Reference",
+      "url": "https://www.cisco.com/c/en/us/td/docs/ios/lanswitch/command/reference/lsw_book.pdf",
+      "format": "pdf",
+      "est_commands": "600+",
+      "gap": "Category depth: VLAN / STP / switchport. Overlaps the MCL — load AFTER it and dedup.",
+      "parse_notes": "Default cat=VLAN unless command name maps to STP. role=switch."
+    },
+    {
+      "id": "cisco_ios_security_cref",
+      "priority": "medium",
+      "vendor": "Cisco",
+      "os": "ios",
+      "default_role": "router",
+      "title": "Cisco IOS Security Command Reference",
+      "url": "https://www.cisco.com/c/en/us/td/docs/ios/security/command/reference/sec_cr_book.pdf",
+      "format": "pdf",
+      "est_commands": "800+",
+      "gap": "Category depth: Security / Firewall / AAA. Dedup against MCL.",
+      "parse_notes": "Default cat=Security; ACL/zone commands -> Firewall."
+    },
+    {
+      "id": "cisco_ios_fundamentals_cref",
+      "priority": "medium",
+      "vendor": "Cisco",
+      "os": "ios",
+      "default_role": "router",
+      "title": "Cisco IOS Configuration Fundamentals Command Reference",
+      "url": "https://www.cisco.com/c/en/us/td/docs/ios/fundamentals/command/reference/cf_book.pdf",
+      "format": "pdf",
+      "est_commands": "700+",
+      "gap": "Category depth: System / management. Dedup against MCL.",
+      "parse_notes": "Default cat=System."
+    },
+    {
+      "id": "extreme_exos_cref",
+      "priority": "medium",
+      "vendor": "Extreme",
+      "os": "exos",
+      "default_role": "switch",
+      "title": "ExtremeXOS Command Reference Guide (31.5)",
+      "url": "https://documentation.extremenetworks.com/exos_commands_31.5/downloads/EXOS_Command_Reference_31.5.pdf",
+      "format": "pdf",
+      "est_commands": "2500+",
+      "gap": "Extreme already at 2,781 — use to VALIDATE/refresh accuracy, not for big new volume. Dedup heavily.",
+      "parse_notes": "EXOS reference is already command-per-section (Syntax/Description/Example). Cleanest parse of the set. cat from section: vlan/stp/ospf/acl."
+    }
+  ]
+}

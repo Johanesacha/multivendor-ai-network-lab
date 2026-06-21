@@ -1,0 +1,5 @@
+# Downloaded vendor docs (large, license-restricted) and parser output.
+# Extract command syntax — never commit redistributed book PDFs/text.
+sources/
+out/
+*.pdf
