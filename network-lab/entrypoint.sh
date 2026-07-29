@@ -3,6 +3,7 @@
 sed -i 's/^bgpd=no/bgpd=yes/' /etc/frr/daemons
 sed -i 's/^ospfd=no/ospfd=yes/' /etc/frr/daemons
 sed -i 's/^staticd=no/staticd=yes/' /etc/frr/daemons
+sed -i 's/^bfdd=no/bfdd=yes/' /etc/frr/daemons
 
 # Copy device-specific FRR config if it exists
 if [ -f /lab-config/frr.conf ]; then
