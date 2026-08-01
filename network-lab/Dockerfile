@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 frrouting/frr:latest
+FROM --platform=linux/amd64 frrouting/frr:v8.4.1
 
 # Install SSH server and tools
 RUN apk add --no-cache openssh-server openssh-client bash python3 tcpdump iproute2 \
