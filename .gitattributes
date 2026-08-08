@@ -1,0 +1,7 @@
+# Force LF line endings for files executed inside Linux containers / via shebang.
+# Without this, Windows git (core.autocrlf=true) checks these out as CRLF, which
+# breaks the shebang line ("#!/bin/bash\r") and Docker fails with
+# "exec /entrypoint.sh: no such file or directory" on container start.
+*.sh text eol=lf
+entrypoint.sh text eol=lf
+Dockerfile text eol=lf

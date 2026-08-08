@@ -199,7 +199,7 @@ services:
   influxdb:
     image: influxdb:2.7
     container_name: influxdb
-    platform: linux/arm64
+    platform: linux/amd64
     networks:
       lab-net:
         ipv4_address: 10.200.0.50
@@ -220,7 +220,7 @@ services:
   grafana:
     image: grafana/grafana:10.4.0
     container_name: grafana
-    platform: linux/arm64
+    platform: linux/amd64
     networks:
       lab-net:
         ipv4_address: 10.200.0.51
@@ -245,7 +245,7 @@ services:
       context: ./telemetry
       dockerfile: Dockerfile
     container_name: frr-telemetry
-    platform: linux/arm64
+    platform: linux/amd64
     networks:
       lab-net:
         ipv4_address: 10.200.0.52
