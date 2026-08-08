@@ -10154,12 +10154,24 @@ setTimeout(() => { try { window.refreshVendorCounts(); } catch(e){} }, 2500);
   };
 })();
 
+/* Shared by every collapsible panel below: browsers reject (and log) setting
+   aria-hidden="true" on an element that still contains focus — e.g. its own
+   close button, mid-click. Blur the focused descendant first so the panel can
+   actually go aria-hidden. See the aria-hidden fix on toggleUnifiedDock above
+   for the console error this avoids. */
+window._blurIfFocusInside = function(container){
+  if (container && document.activeElement && container.contains(document.activeElement)) {
+    document.activeElement.blur();
+  }
+};
+
 /* ── #2 Alert drawer ──────────────────────────────────────────────────── */
 window.toggleAlertDrawer = function(open){
   const dr = document.getElementById('alert-drawer');
   if (!dr) return;
   const isOpen = dr.classList.contains('open');
   const willOpen = open === undefined ? !isOpen : !!open;
+  if (!willOpen) window._blurIfFocusInside(dr);
   dr.classList.toggle('open', willOpen);
   dr.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
   if (willOpen) renderAlertDrawer();
@@ -10252,6 +10264,7 @@ window.toggleTopoDock = function(open){
   if (!dock) return;
   const isOpen = dock.classList.contains('open');
   const willOpen = open === undefined ? !isOpen : !!open;
+  if (!willOpen) window._blurIfFocusInside(dock);
   dock.classList.toggle('open', willOpen);
   dock.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
   if (willOpen) cloneTopoIntoDock();
@@ -10277,6 +10290,7 @@ window.toggleTermDrawer = function(open){
   if (!dr) return;
   const isOpen = dr.classList.contains('open');
   const willOpen = open === undefined ? !isOpen : !!open;
+  if (!willOpen) window._blurIfFocusInside(dr);
   dr.classList.toggle('open', willOpen);
   dr.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
   if (willOpen) {
@@ -10488,6 +10502,15 @@ window.toggleUnifiedDock = function(open){
   if (!dock) return;
   const isOpen = dock.classList.contains('open');
   const willOpen = open === undefined ? !isOpen : !!open;
+  // Closing must move focus OUT of the dock before it goes aria-hidden — an
+  // aria-hidden ancestor with a still-focused descendant is invalid (browsers log
+  // "Blocked aria-hidden on an element because its descendant retained focus" and
+  // assistive tech gets confused about what's focused). This matters in practice:
+  // the ✕ button that calls toggleUnifiedDock(false) is itself inside the dock, so
+  // it's still focused at the moment we'd otherwise hide its ancestor.
+  if (!willOpen && dock.contains(document.activeElement)) {
+    document.activeElement.blur();
+  }
   dock.classList.toggle('open', willOpen);
   dock.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
   document.body.classList.toggle('ud-open', willOpen);
@@ -10703,6 +10726,7 @@ window.toggleTopoRibbon = function(open){
   if (!r) return;
   const isOpen = r.classList.contains('expanded');
   const willOpen = open === undefined ? !isOpen : !!open;
+  if (!willOpen) window._blurIfFocusInside(r);
   r.classList.toggle('expanded', willOpen);
   r.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
   if (btn) btn.classList.toggle('on', willOpen);
@@ -10740,6 +10764,7 @@ window.toggleInlineTriage = function(open){
   if (!t) return;
   const isOpen = t.classList.contains('expanded');
   const willOpen = open === undefined ? !isOpen : !!open;
+  if (!willOpen) window._blurIfFocusInside(t);
   t.classList.toggle('expanded', willOpen);
   t.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
   if (fb) fb.classList.toggle('fb-alerts-pulse', willOpen);
