@@ -16,7 +16,7 @@
 <style>
 :root{--bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--border:#30363d;--text:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--green:#3fb950;--yellow:#d29922;--red:#f85149;--orange:#f0883e;--purple:#a78bfa;--teal:#06b6d4;}
 *{box-sizing:border-box;margin:0;padding:0;}
-body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;height:100vh;display:flex;flex-direction:column;overflow:hidden;padding-bottom:32px;transition:padding-bottom .25s cubic-bezier(.2,.8,.2,1);}
 /* Round-3 bug #2: bump right padding so the LIVE badge isn't flush
    to the viewport edge at 1440px screens.
    Round-6 fix: flex-wrap+row-gap so right-side controls wrap onto a
@@ -816,17 +816,22 @@ body.light .fleet-banner.crit{background:linear-gradient(90deg,rgba(207,34,46,.1
   font-weight:600;transition:.12s}
 #unified-dock-bar .udb-close:hover{background:var(--sev-crit);color:#fff;border-color:var(--sev-crit)}
 #unified-dock-bar .udb-hint{color:var(--muted);font-size:10px;padding:0 8px;letter-spacing:.5px}
-/* Make sure main content doesn't get hidden under the persistent bar */
-body{padding-bottom:32px}
+/* Make sure main content doesn't get hidden under the persistent bar, and — when the
+   dock is expanded — under the extra ~300px it covers too. Bug: an earlier version of
+   this rule set `#unified-dock{bottom:32px !important}`, which pinned the dock at its
+   fully-open position AT ALL TIMES (the `.open` class toggle had no visual effect,
+   `!important` always won). That left it permanently covering ~300px of page content
+   — e.g. the Agent Chat input row at the bottom of #tab-chat, which was effectively
+   unreachable any time the dock had ever been opened. Fixed by removing the stray
+   !important rule below and instead growing body's padding-bottom to match, driven
+   by JS (see the `ud-open` class toggle in toggleUnifiedDock). */
 body.noc-wall #unified-dock-bar{display:none}
 body.noc-wall{padding-bottom:0}
-/* When dock is collapsed, the bar IS the dock; when expanded, the body sits above it */
-#unified-dock{bottom:32px !important}
-#unified-dock.open{bottom:32px}
+body.ud-open{padding-bottom:332px}
 #unified-dock{position:fixed;bottom:-300px;left:0;right:0;height:300px;background:var(--bg2);
   border-top:2px solid var(--border);box-shadow:0 -4px 18px rgba(0,0,0,.4);z-index:8400;
   transition:bottom .25s cubic-bezier(.2,.8,.2,1);display:flex;flex-direction:column}
-#unified-dock.open{bottom:0}
+#unified-dock.open{bottom:32px}
 #unified-dock .ud-hdr{display:flex;align-items:center;justify-content:space-between;
   background:var(--bg);border-bottom:1px solid var(--border);padding:0 8px;flex-shrink:0}
 #unified-dock .ud-tabs{display:flex;gap:0}
@@ -10485,6 +10490,7 @@ window.toggleUnifiedDock = function(open){
   const willOpen = open === undefined ? !isOpen : !!open;
   dock.classList.toggle('open', willOpen);
   dock.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
+  document.body.classList.toggle('ud-open', willOpen);
 };
 
 window.udSelectTab = function(name){
