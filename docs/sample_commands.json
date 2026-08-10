@@ -1,0 +1,52 @@
+[
+  {
+    "vendor": "Cisco", "os": "ios", "role": "router", "cat": "OSPF",
+    "title": "router ospf", "cmd": "router ospf <process-id>",
+    "desc": "Enable OSPF routing and enter router configuration mode."
+  },
+  {
+    "vendor": "Cisco", "os": "ios", "role": "switch", "cat": "VLAN",
+    "title": "switchport mode trunk", "cmd": "switchport mode trunk",
+    "desc": "Set the interface to unconditional 802.1Q trunking mode."
+  },
+  {
+    "vendor": "Cisco", "os": "ios", "role": "router", "cat": "BGP",
+    "title": "show ip bgp summary", "cmd": "show ip bgp summary",
+    "desc": "Display the status of all BGP neighbors and prefix counts."
+  },
+  {
+    "vendor": "Nokia", "os": "sros", "role": "router", "cat": "BGP",
+    "title": "configure router bgp", "cmd": "configure router bgp",
+    "desc": "Enter the BGP configuration context for the base router (SR OS classic CLI)."
+  },
+  {
+    "vendor": "Nokia", "os": "sros", "role": "router", "cat": "Troubleshooting",
+    "title": "show router", "cmd": "show router bgp summary",
+    "desc": "Display BGP neighbor state and session summary on SR OS."
+  },
+  {
+    "vendor": "Nokia", "os": "srlinux", "role": "switch", "cat": "BGP",
+    "title": "set network-instance", "cmd": "set / network-instance default protocols bgp autonomous-system <asn>",
+    "desc": "Set the local AS for BGP in the default network-instance (SR Linux declarative CLI)."
+  },
+  {
+    "vendor": "Nokia", "os": "srlinux", "role": "switch", "cat": "Troubleshooting",
+    "title": "show network-instance", "cmd": "show network-instance default protocols bgp neighbor",
+    "desc": "Display BGP neighbor state for the default network-instance on SR Linux."
+  },
+  {
+    "vendor": "Extreme", "os": "exos", "role": "switch", "cat": "VLAN",
+    "title": "create vlan", "cmd": "create vlan <vlan-name>",
+    "desc": "Create a VLAN with the given name on ExtremeXOS."
+  },
+  {
+    "vendor": "Extreme", "os": "exos", "role": "switch", "cat": "VLAN",
+    "title": "configure vlan add ports", "cmd": "configure vlan <vlan-name> add ports <portlist> {tagged | untagged}",
+    "desc": "Add tagged or untagged ports to a VLAN."
+  },
+  {
+    "vendor": "Extreme", "os": "exos", "role": "switch", "cat": "OSPF",
+    "title": "show ospf", "cmd": "show ospf",
+    "desc": "Display global OSPF configuration and operational state."
+  }
+]
