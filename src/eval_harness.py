@@ -45,9 +45,27 @@ def get_scenario(scenario_id: str) -> dict[str, Any] | None:
 
 
 def _keyword_overlap(text: str, keywords: list[str]) -> tuple[int, list[str]]:
-    """Return (count, hits) of keywords found case-insensitively in text."""
-    lower = text.lower()
-    hits = [k for k in keywords if k.lower() in lower]
+    """Return (count, hits) of keywords found in text as whole words/phrases.
+
+    Two fixes over a plain substring check:
+      - \\b word-boundary matching, so "AS" doesn't match inside "was"/"has"/
+        "last", "RCE" doesn't match inside "source", and "22" doesn't match
+        inside "2022".
+      - acronyms/identifiers (keyword is all-uppercase, e.g. "AS"/"RCE"/"MTU",
+        or contains a digit, e.g. "22"/"CVE-2022-22241") are matched
+        case-sensitively. Without this, a case-insensitive whole-word match on
+        "AS" still hits the ordinary English word "as" ("reported as ..."),
+        which word-boundaries alone don't fix.
+    """
+    hits = []
+    for k in keywords:
+        if not k:
+            continue
+        pattern = r"\b" + re.escape(k) + r"\b"
+        is_identifier = k.isupper() or any(c.isdigit() for c in k)
+        flags = 0 if is_identifier else re.IGNORECASE
+        if re.search(pattern, text, flags):
+            hits.append(k)
     return len(hits), hits
 
 
