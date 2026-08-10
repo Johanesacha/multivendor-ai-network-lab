@@ -65,6 +65,7 @@ from flask_cors import CORS
 import paramiko
 import requests as _requests
 from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
+import llm_client
 
 app = Flask(__name__)
 
@@ -8258,86 +8259,20 @@ loadDocs();
 # ── 🤖 LOCAL LLM INTEGRATION (Docker Model Runner) ──────────────────────────
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _clean_llm_response(text):
-    """Strip chain-of-thought preamble that qwen3 sometimes leaks despite enable_thinking=false.
-    Removes lines like 'Okay, the user wants...', 'I need to...', 'Let me...', etc."""
-    if not text:
-        return text
-    import re
-    lines = text.split("\n")
-    cleaned = []
-    # Skip leading lines that look like internal reasoning
-    reasoning_patterns = re.compile(
-        r"^(okay|ok|alright|so|let me|i need to|i should|i\'ll|first|the user|hmm|now|thinking|wait)\b",
-        re.IGNORECASE
-    )
-    started = False
-    for line in lines:
-        stripped = line.strip()
-        if not started:
-            # Skip empty lines and reasoning lines at the start
-            if not stripped:
-                continue
-            if reasoning_patterns.match(stripped):
-                continue
-            started = True
-        cleaned.append(line)
-    result = "\n".join(cleaned).strip()
-    # If we stripped everything, return original (safety net)
-    return result if result else text.strip()
+# _clean_llm_response and Claude calls now live in llm_client.py (shared with
+# pydantic_ai_orchestrator.py and eval_harness.py — see that module for the
+# implementation). Kept as thin local aliases so the ~15 existing call sites
+# below don't need to change.
+_clean_llm_response = llm_client.clean_llm_response
 
 
 def _llm_query_claude(system_prompt, user_prompt, max_tokens=500):
-    """Direct call to Anthropic Claude. Prefers the official `anthropic` SDK
-    (typed errors + built-in retries, consistent with the orchestrator's
-    _call_claude); falls back to a raw HTTP POST so the path still works if the
-    SDK isn't installed. Returns cleaned text or None."""
-    if not ANTHROPIC_API_KEY:
-        return None
-
-    # Preferred path: official anthropic SDK.
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        resp = client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=max_tokens,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
-        text = "".join(getattr(b, "text", "") for b in resp.content).strip()
-        if text:
-            return _clean_llm_response(text)
-        return None
-    except ImportError:
-        pass  # SDK not installed — fall through to raw HTTP
-    except Exception:
-        pass  # SDK call failed — fall through to raw HTTP
-
-    # Fallback path: raw HTTP (no SDK dependency).
-    try:
-        r = _requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": ANTHROPIC_API_KEY,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": ANTHROPIC_MODEL,
-                "max_tokens": max_tokens,
-                "system": system_prompt,
-                "messages": [{"role": "user", "content": user_prompt}],
-            },
-            timeout=30,
-        )
-        if r.status_code == 200:
-            text = r.json()["content"][0].get("text", "").strip()
-            if text:
-                return _clean_llm_response(text)
-    except Exception:
-        pass
-    return None
+    """Direct call to Anthropic Claude via llm_client. Returns cleaned text or None."""
+    text, _usage = llm_client.query_claude(
+        system_prompt, user_prompt,
+        model=ANTHROPIC_MODEL, max_tokens=max_tokens, api_key=ANTHROPIC_API_KEY,
+    )
+    return text
 
 
 def _llm_query(system_prompt, user_prompt, max_tokens=500):
