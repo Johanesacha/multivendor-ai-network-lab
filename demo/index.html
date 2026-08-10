@@ -4251,16 +4251,26 @@ function setAIPrompt(txt){
   runAICommand();
 }
 
-function renderAIResult(outEl, q, dev, cli, output, explain, isLive){
+const LLM_PROVIDER_LABELS = {
+  'claude': 'Claude',
+  'ollama': 'Ollama',
+  'docker-model-runner': 'Docker Model Runner',
+};
+function llmProviderLabel(provider){
+  return LLM_PROVIDER_LABELS[provider] || 'AI';
+}
+
+function renderAIResult(outEl, q, dev, cli, output, explain, isLive, provider){
   outEl.textContent='';
   const badge = isLive ? ' 🟢 LIVE' : ' ⚪ DEMO';
+  const label = llmProviderLabel(provider);
   const q_sec=document.createElement('div'); q_sec.className='asec';
   const q_h=document.createElement('h4'); q_h.style.color='var(--accent)'; q_h.textContent='Query'+badge;
   const q_t=document.createElement('div'); q_t.style.cssText='font-size:13px;color:var(--text);margin-bottom:6px'; q_t.textContent='"'+q+'"';
   const q_m=document.createElement('div'); q_m.style.cssText='font-size:11px;color:var(--muted)'; q_m.textContent='Target: '+dev;
   q_sec.appendChild(q_h); q_sec.appendChild(q_t); q_sec.appendChild(q_m);
   const t_sec=document.createElement('div'); t_sec.className='asec';
-  const t_h=document.createElement('h4'); t_h.style.color='var(--yellow)'; t_h.textContent='AI Translation (Qwen3)';
+  const t_h=document.createElement('h4'); t_h.style.color='var(--yellow)'; t_h.textContent='AI Translation ('+label+')';
   const t_cmd=document.createElement('div'); t_cmd.style.cssText='font-family:Consolas,monospace;font-size:13px;color:var(--green);padding:6px;background:var(--bg);border-radius:4px';
   t_cmd.textContent=cli;
   t_sec.appendChild(t_h); t_sec.appendChild(t_cmd);
@@ -4270,7 +4280,7 @@ function renderAIResult(outEl, q, dev, cli, output, explain, isLive){
   o_pre.textContent=output;
   o_sec.appendChild(o_h); o_sec.appendChild(o_pre);
   const ai=document.createElement('div'); ai.className='ai-bubble';
-  const ai_h=document.createElement('div'); ai_h.className='ai-head'; ai_h.textContent='Qwen3 Explanation';
+  const ai_h=document.createElement('div'); ai_h.className='ai-head'; ai_h.textContent=label+' Explanation';
   const ai_t=document.createElement('div'); ai_t.textContent=explain||'(LLM explanation unavailable)';
   ai.appendChild(ai_h); ai.appendChild(ai_t);
   outEl.appendChild(q_sec); outEl.appendChild(t_sec); outEl.appendChild(o_sec); outEl.appendChild(ai);
@@ -4288,12 +4298,12 @@ async function runAICommand(){
     if(r.ok && r.data && r.data.cli){
       const d = r.data;
       const sshOut = (d.output && typeof d.output === 'object') ? (d.output.output||'') : (d.output||'');
-      renderAIResult(out, q, dev, d.cli, sshOut, d.explanation, true);
+      renderAIResult(out, q, dev, d.cli, sshOut, d.explanation, true, d.provider);
       return;
     }
   }
   const resp = AI_RESP[matchAIKey(q)] || AI_DEFAULT;
-  setTimeout(()=> renderAIResult(out, q, dev, resp.cmd, resp.out, resp.explain, false), 900);
+  setTimeout(()=> renderAIResult(out, q, dev, resp.cmd, resp.out, resp.explain, false, null), 900);
 }
 
 /* Batfish */
@@ -4352,7 +4362,7 @@ async function runBatfish(){
       });
       if(d.llm_summary){
         const ai=document.createElement('div'); ai.className='ai-bubble';
-        const h=document.createElement('div'); h.className='ai-head'; h.textContent='🟢 Qwen3 Live Recommendation';
+        const h=document.createElement('div'); h.className='ai-head'; h.textContent='🟢 '+llmProviderLabel(d.llm_provider)+' Live Recommendation';
         const t=document.createElement('div'); t.textContent=d.llm_summary;
         ai.appendChild(h); ai.appendChild(t); out.appendChild(ai);
       }
