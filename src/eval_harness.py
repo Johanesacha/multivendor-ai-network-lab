@@ -233,7 +233,7 @@ def run_scenario(scenario_id: str, agent: str = "ai_command") -> dict[str, Any]:
     to a callable resolved lazily (we only import here to avoid cycles).
 
     Returns dict with: {symptom, agent_output, agent_path, stub_reason,
-    keyword_score, llm_score?, total_ms, scenario, usage}
+    keyword_score, llm_score?, total_ms, scenario, model_cost, eval_overhead_cost}
     """
     scenario = get_scenario(scenario_id)
     if not scenario:
@@ -249,9 +249,14 @@ def run_scenario(scenario_id: str, agent: str = "ai_command") -> dict[str, Any]:
     jscore = llm_judge(agent_output, scenario)
     judge_usage = (jscore or {}).get("usage", {"input": 0, "output": 0}) if isinstance(jscore, dict) else {"input": 0, "output": 0}
 
+    # Kept separate rather than blended: "how much did running this agent
+    # cost" and "how much did evaluating it cost" are different questions,
+    # and a blended number can't answer either one (review item 5).
+    model_cost = {"input": int(agent_usage.get("input", 0)), "output": int(agent_usage.get("output", 0))}
+    eval_overhead_cost = {"input": int(judge_usage.get("input", 0)), "output": int(judge_usage.get("output", 0))}
     total_usage = {
-        "input":  int(agent_usage.get("input", 0)) + int(judge_usage.get("input", 0)),
-        "output": int(agent_usage.get("output", 0)) + int(judge_usage.get("output", 0)),
+        "input":  model_cost["input"] + eval_overhead_cost["input"],
+        "output": model_cost["output"] + eval_overhead_cost["output"],
     }
 
     result = {
@@ -265,7 +270,8 @@ def run_scenario(scenario_id: str, agent: str = "ai_command") -> dict[str, Any]:
         "keyword_score": kscore,
         "llm_score": jscore,
         "total_ms": elapsed_ms,
-        "usage": total_usage,
+        "model_cost": model_cost,
+        "eval_overhead_cost": eval_overhead_cost,
     }
 
     gait_audit.record(
