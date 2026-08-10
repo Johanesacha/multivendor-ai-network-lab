@@ -8275,6 +8275,17 @@ def _llm_query_claude(system_prompt, user_prompt, max_tokens=500):
     return text
 
 
+def _ping_ollama(timeout=2):
+    """Quick liveness probe for the local Ollama server. Used to decide
+    whether the (slow, up to LLM_TIMEOUT-per-attempt) local cascade in
+    _llm_query() is worth attempting at all."""
+    try:
+        r = _requests.get(f"{OLLAMA_URL.rstrip('/')}/api/tags", timeout=timeout)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
 def _llm_query(system_prompt, user_prompt, max_tokens=500):
     """Query an LLM. Provider order is controlled by LLM_PROVIDER env var:
       - "claude"      : Claude first, local fallback
@@ -8290,6 +8301,17 @@ def _llm_query(system_prompt, user_prompt, max_tokens=500):
         text = _llm_query_claude(system_prompt, user_prompt, max_tokens=max_tokens)
         if text is not None or LLM_PROVIDER == "claude-only":
             return text  # success or hard-skip local
+
+    # "local" mode: a 2s probe tells us up front whether the local stack is
+    # even reachable. On machines without Ollama/Docker Model Runner running,
+    # skip straight to Claude instead of burning up to LLM_TIMEOUT (default
+    # 60s) per attempt across 4 local attempts (see UI_TESTING_LOG bug #5).
+    # If Claude isn't configured either, fall through to the full local
+    # cascade below exactly as before this check existed.
+    if not _ping_ollama() and ANTHROPIC_API_KEY:
+        text = _llm_query_claude(system_prompt, user_prompt, max_tokens=max_tokens)
+        if text is not None:
+            return text
 
     # ── Attempt 0: Ollama native /api/chat (gemma4 / qwen2.5-coder / llama3.2) ─
     # Use native Ollama API with think=false to disable chain-of-thought on thinking
@@ -8417,13 +8439,7 @@ def _list_available_providers() -> list[dict]:
         "label": f"Claude ({ANTHROPIC_MODEL})",
         "available": bool(ANTHROPIC_API_KEY),
     })
-    ollama_ok = False
-    try:
-        r = _requests.get(f"{OLLAMA_URL.rstrip('/')}/api/tags", timeout=2)
-        ollama_ok = (r.status_code == 200)
-    except Exception:
-        pass
-    out.append({"id": "local", "label": f"Local ({LLM_MODEL})", "available": ollama_ok})
+    out.append({"id": "local", "label": f"Local ({LLM_MODEL})", "available": _ping_ollama()})
     out.append({"id": "claude-only", "label": "Claude only (no fallback)", "available": bool(ANTHROPIC_API_KEY)})
     return out
 
