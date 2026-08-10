@@ -249,14 +249,21 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     Aggregate a list of run_scenario() results into summary statistics for an
     evaluation campaign.
 
-    Methodology: stub runs (agent_path == "stub" — the model under test was
-    unreachable and the deterministic offline fallback _stub_agent answered
-    instead) are excluded from the numeric averages below. A stub doesn't
-    diagnose anything, but keyword_score can still land in the 6-8/10 range
-    because the stub's boilerplate remediation text overlaps generic
-    troubleshooting vocabulary in several scenarios' keyword lists —
-    including it would silently inflate campaign-wide averages. The count of
-    excluded runs is reported so nothing is hidden.
+    Methodology: two categories of run are excluded from the numeric averages
+    below, and counted separately instead of silently blending into the mean:
+
+      - stub runs (agent_path == "stub" — the model under test was
+        unreachable and the deterministic offline fallback _stub_agent
+        answered instead). A stub doesn't diagnose anything, but
+        keyword_score can still land in the 6-8/10 range because the stub's
+        boilerplate remediation text overlaps generic troubleshooting
+        vocabulary in several scenarios' keyword lists.
+      - judge errors (llm_score.error == True — a rate limit, timeout, or
+        truncated response made the judge return score:0). That 0 is not a
+        real quality judgment; averaging it in would make an infrastructure
+        failure look like the agent scored badly.
+
+    Counts of both are reported so nothing is hidden from the aggregate.
     """
     def _mean(xs: list[float]) -> float | None:
         return round(sum(xs) / len(xs), 2) if xs else None
@@ -264,13 +271,18 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     stub_results = [r for r in results if r.get("agent_path") == "stub"]
     live_results = [r for r in results if r.get("agent_path") != "stub"]
 
+    judge_error_results = [r for r in live_results if (r.get("llm_score") or {}).get("error")]
+    judge_ok_results = [r for r in live_results if r.get("llm_score") and not r["llm_score"].get("error")]
+
     kw_scores = [r["keyword_score"]["score"] for r in live_results if r.get("keyword_score")]
-    llm_scores = [r["llm_score"]["score"] for r in live_results if r.get("llm_score")]
+    llm_scores = [r["llm_score"]["score"] for r in judge_ok_results]
 
     return {
         "total_runs": len(results),
         "included_runs": len(live_results),
         "excluded_stub_runs": len(stub_results),
+        "excluded_judge_error_runs": len(judge_error_results),
+        "scored_llm_runs": len(llm_scores),
         "mean_keyword_score": _mean(kw_scores),
         "mean_llm_score": _mean(llm_scores),
     }
