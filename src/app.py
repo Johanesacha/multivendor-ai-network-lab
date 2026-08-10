@@ -8286,6 +8286,19 @@ def _ping_ollama(timeout=2):
         return False
 
 
+# Which provider actually answered the most recent _llm_query() call — the
+# frontend was showing a hardcoded "Qwen3" regardless of what really
+# responded (UI_TESTING_LOG.md bug #5). Read via _pop_last_llm_provider()
+# once per request and surfaced in the API response.
+_LAST_LLM_PROVIDER = {"name": None}
+
+
+def _pop_last_llm_provider():
+    name = _LAST_LLM_PROVIDER["name"]
+    _LAST_LLM_PROVIDER["name"] = None
+    return name
+
+
 def _llm_query(system_prompt, user_prompt, max_tokens=500):
     """Query an LLM. Provider order is controlled by LLM_PROVIDER env var:
       - "claude"      : Claude first, local fallback
@@ -8299,6 +8312,8 @@ def _llm_query(system_prompt, user_prompt, max_tokens=500):
     # Claude-first or Claude-only modes: try Anthropic before any local model.
     if LLM_PROVIDER in ("claude", "claude-only"):
         text = _llm_query_claude(system_prompt, user_prompt, max_tokens=max_tokens)
+        if text is not None:
+            _LAST_LLM_PROVIDER["name"] = "claude"
         if text is not None or LLM_PROVIDER == "claude-only":
             return text  # success or hard-skip local
 
@@ -8311,6 +8326,7 @@ def _llm_query(system_prompt, user_prompt, max_tokens=500):
     if not _ping_ollama() and ANTHROPIC_API_KEY:
         text = _llm_query_claude(system_prompt, user_prompt, max_tokens=max_tokens)
         if text is not None:
+            _LAST_LLM_PROVIDER["name"] = "claude"
             return text
 
     # ── Attempt 0: Ollama native /api/chat (gemma4 / qwen2.5-coder / llama3.2) ─
@@ -8334,6 +8350,7 @@ def _llm_query(system_prompt, user_prompt, max_tokens=500):
             msg = r.json().get("message", {})
             text = (msg.get("content") or "").strip()
             if text:
+                _LAST_LLM_PROVIDER["name"] = "ollama"
                 return _clean_llm_response(text)
     except Exception:
         pass
@@ -8363,6 +8380,7 @@ def _llm_query(system_prompt, user_prompt, max_tokens=500):
                     msg = r.json()["choices"][0]["message"]
                     text = msg.get("content") or msg.get("reasoning_content") or ""
                     if text.strip():
+                        _LAST_LLM_PROVIDER["name"] = "docker-model-runner"
                         return _clean_llm_response(text.strip())
             except Exception:
                 pass
@@ -8419,6 +8437,7 @@ def _llm_query(system_prompt, user_prompt, max_tokens=500):
                         msg = data["choices"][0]["message"]
                         text = msg.get("content") or msg.get("reasoning_content") or ""
                         if text.strip():
+                            _LAST_LLM_PROVIDER["name"] = "docker-model-runner"
                             return _clean_llm_response(text.strip())
             except Exception:
                 pass
@@ -8426,6 +8445,7 @@ def _llm_query(system_prompt, user_prompt, max_tokens=500):
     # ── Attempt 3: Anthropic Claude fallback ──────────────────────────────────
     text = _llm_query_claude(system_prompt, user_prompt, max_tokens=max_tokens)
     if text is not None:
+        _LAST_LLM_PROVIDER["name"] = "claude"
         return text
 
     return None
@@ -11918,6 +11938,7 @@ def api_ai_command():
     # Step 1: LLM translates NL → CLI
     user_prompt = f'Device type: {dtype}\nQuestion: "{query}"'
     translation_raw = _llm_query(_NL_SYSTEM, user_prompt, max_tokens=150)
+    provider_used = _pop_last_llm_provider()
     if not translation_raw:
         return jsonify({"error": "LLM unavailable — set LLM_ENABLED=true and MODEL_RUNNER_URL"}), 503
 
@@ -11934,7 +11955,10 @@ def api_ai_command():
     if not cli_cmd:
         return jsonify({"error": "LLM could not translate query to CLI"}), 422
 
-    result: dict = {"query": query, "hostname": hostname, "cli": cli_cmd, "output": None, "explanation": None}
+    result: dict = {
+        "query": query, "hostname": hostname, "cli": cli_cmd, "output": None,
+        "explanation": None, "provider": provider_used,
+    }
 
     # Step 2: Execute via SSH (if device is known)
     if dev:
@@ -12025,9 +12049,11 @@ def api_batfish_analyze():
 
     # LLM enhancement: additional insights
     llm_summary = None
+    llm_provider = None
     if LLM_ENABLED:
         sys_p = "You are a network security and reliability expert. Analyze this config snippet for security issues, best-practice violations, and reliability risks. Be concise — 2 sentences max."
         llm_summary = _llm_query(sys_p, f"Config:\n{config_text[:2000]}", max_tokens=200)
+        llm_provider = _pop_last_llm_provider()
         if llm_summary:
             llm_summary = _clean_llm_response(llm_summary)
 
@@ -12041,6 +12067,7 @@ def api_batfish_analyze():
         "passes": len(passes),
         "findings": findings,
         "llm_summary": llm_summary,
+        "llm_provider": llm_provider,
     })
 
 
