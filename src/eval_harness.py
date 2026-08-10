@@ -109,11 +109,32 @@ def keyword_score(agent_output: str, scenario: dict[str, Any]) -> dict[str, Any]
     }
 
 
-def llm_judge(agent_output: str, scenario: dict[str, Any]) -> dict[str, Any] | None:
+# Model used for the LLM-as-judge. Exposed as a module constant (rather than
+# a string only inlined in the API call) so aggregate_results() and any
+# consumer of a run's llm_score.model can report it without re-deriving it.
+#
+# LIMITATION — self-preference bias: this is the SAME model _ai_command_sync()
+# uses to answer the "ai_command" agent path by default (and the default for
+# pydantic_ai_orchestrator._call_claude too). A model judging its own family's
+# output is a known source of self-preference bias in LLM-as-judge setups —
+# the judge may systematically score claude-haiku-4-5 diagnoses more
+# favorably than an equally-good diagnosis from a different model family.
+# Not corrected here (would need an independent judge model); flagged so
+# campaign results are interpreted with this in mind.
+JUDGE_MODEL = "claude-haiku-4-5"
+
+
+def llm_judge(symptom: str, agent_output: str, scenario: dict[str, Any]) -> dict[str, Any] | None:
     """
     Use Anthropic claude-haiku-4-5 to score 0–10 with reasoning.
     Returns None if ANTHROPIC_API_KEY is not set or anthropic SDK missing.
     On success the returned dict includes a `usage` field with input/output tokens.
+
+    The judge sees the symptom and a generic scoring rubric — NOT the
+    scenario's expected_root_cause_keywords / expected_remediation_keywords
+    (the answer key used by keyword_score()) or the scenario title, both of
+    which would leak the intended answer into an evaluation that's supposed
+    to be independent of it.
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -125,21 +146,27 @@ def llm_judge(agent_output: str, scenario: dict[str, Any]) -> dict[str, Any] | N
 
     client = anthropic.Anthropic(api_key=api_key)
     prompt = (
-        "You are an expert network engineer judging an AI agent's diagnosis.\n\n"
-        f"Scenario:\n  Title: {scenario['title']}\n"
-        f"  Category: {scenario['category']}\n"
-        f"  Expected root cause keywords: {scenario.get('expected_root_cause_keywords')}\n"
-        f"  Expected remediation keywords: {scenario.get('expected_remediation_keywords')}\n\n"
+        "You are an expert network engineer judging an AI agent's incident "
+        "diagnosis. You do NOT have an answer key — judge the diagnosis on its "
+        "own technical merits against the reported symptom.\n\n"
+        f"Category: {scenario['category']}\n"
+        f"Severity: {scenario.get('severity', 'unknown')}\n\n"
+        f"Reported symptom:\n{symptom}\n\n"
         f"Agent's diagnosis:\n{agent_output}\n\n"
-        "Score the diagnosis from 0 to 10 (10 = perfect). Consider:\n"
-        "  - Correct root cause identification (60%)\n"
-        "  - Actionable remediation (30%)\n"
-        "  - No hallucinated devices/peers/IPs (10%)\n\n"
+        "Score the diagnosis from 0 to 10 (10 = perfect) using this rubric:\n"
+        "  - Root cause (60%): does the stated root cause plausibly and "
+        "specifically explain the reported symptom — not a restatement of the "
+        "symptom itself, and not a generic list of possible causes?\n"
+        "  - Remediation (30%): are the proposed steps concrete, actionable, "
+        "and directly tied to the stated root cause — not generic "
+        "troubleshooting boilerplate that would apply to any incident?\n"
+        "  - Grounding (10%): no hallucinated devices, peers, IPs, or facts "
+        "not supported by the symptom.\n\n"
         "Respond with strict JSON: {\"score\": <0-10>, \"reasoning\": \"...\"}"
     )
     try:
         resp = client.messages.create(
-            model="claude-haiku-4-5",
+            model=JUDGE_MODEL,
             max_tokens=1000,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -149,18 +176,19 @@ def llm_judge(agent_output: str, scenario: dict[str, Any]) -> dict[str, Any] | N
         token_out = int(getattr(usage, "output_tokens", 0) or 0) if usage else 0
         m = re.search(r"\{[\s\S]*\}", text)
         if not m:
-            return {"score": 0, "method": "llm_judge", "max": 10, "error": True,
+            return {"score": 0, "method": "llm_judge", "model": JUDGE_MODEL, "max": 10, "error": True,
                     "usage": {"input": token_in, "output": token_out}}
         parsed = json.loads(m.group(0))
         parsed["method"] = "llm_judge"
-        parsed["model"] = "claude-haiku-4-5"
+        parsed["model"] = JUDGE_MODEL
         parsed["max"] = 10
         parsed["usage"] = {"input": token_in, "output": token_out}
         return parsed
     except (anthropic.APIError, anthropic.APIConnectionError, anthropic.RateLimitError,
             json.JSONDecodeError, KeyError, TypeError) as e:
         logger.warning("llm_judge failed: %s", e)
-        return {"score": 0, "reasoning": f"judge error: {e}", "method": "llm_judge", "max": 10, "error": True}
+        return {"score": 0, "reasoning": f"judge error: {e}", "method": "llm_judge",
+                "model": JUDGE_MODEL, "max": 10, "error": True}
 
 
 def synthesize_symptom(scenario: dict[str, Any]) -> str:
@@ -246,7 +274,7 @@ def run_scenario(scenario_id: str, agent: str = "ai_command") -> dict[str, Any]:
     elapsed_ms = int((time.time() - t0) * 1000)
 
     kscore = keyword_score(agent_output, scenario)
-    jscore = llm_judge(agent_output, scenario)
+    jscore = llm_judge(symptom, agent_output, scenario)
     judge_usage = (jscore or {}).get("usage", {"input": 0, "output": 0}) if isinstance(jscore, dict) else {"input": 0, "output": 0}
 
     # Kept separate rather than blended: "how much did running this agent
@@ -334,6 +362,7 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
         "mean_keyword_score": _mean(kw_scores),
         "mean_length_controlled_score": _mean(lc_scores),
         "mean_llm_score": _mean(llm_scores),
+        "judge_model": JUDGE_MODEL,
     }
 
 

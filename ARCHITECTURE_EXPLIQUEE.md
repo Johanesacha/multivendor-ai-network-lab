@@ -287,13 +287,14 @@ fonction `run_scenario`) :
        (root_cause_keywords, remediation_keywords définis dans scenarios.json)
        apparaissent dans la réponse de l'agent. Pas d'IA ici, juste du texte.
 
-7. llm_judge(agent_output, scenario)
-     → SECOND appel Claude, différent du premier : on donne à Claude la question,
-       les mots-clés attendus, ET la réponse de l'agent, et on lui demande de noter
-       /10 avec un raisonnement. C'est ÇA le "LLM-as-judge" — un LLM qui évalue la
-       réponse d'un autre appel LLM (ou du même modèle, réutilisé comme évaluateur
-       indépendant). Bug connu ici : le budget de tokens de CE second appel est trop
-       court (max_tokens=400) pour les diagnostics longs — voir SETUP_GUIDE.md Bug #3.
+7. llm_judge(symptom, agent_output, scenario)
+     → SECOND appel Claude, différent du premier : on donne à Claude le symptôme
+       signalé, la réponse de l'agent, et une rubrique de notation générale — PAS
+       les mots-clés attendus ni le titre du scénario, qui donneraient la réponse
+       à l'avance. C'est ÇA le "LLM-as-judge" — un LLM qui évalue la réponse d'un
+       autre appel LLM. Limite connue : le juge (claude-haiku-4-5) est le même
+       modèle que l'agent testé par défaut — biais d'auto-préférence documenté
+       dans eval_harness.py (JUDGE_MODEL), pas corrigé.
 
 8. gait_audit.record(...)
      → écrit une ligne dans audit/gait_YYYY-MM-DD.jsonl : qui (eval_harness), quoi
