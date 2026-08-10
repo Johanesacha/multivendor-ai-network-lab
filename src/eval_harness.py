@@ -24,6 +24,7 @@ import time
 from typing import Any
 
 import gait_audit
+import llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -270,36 +271,21 @@ def _pop_last_ai_usage() -> dict[str, int]:
 
 
 def _ai_command_sync(prompt: str) -> str | None:
-    """Call Anthropic claude-haiku-4-5 directly with a network-engineering system prompt.
-    Side effect: records token usage in module-scoped _LAST_AI_USAGE.
+    """Call Claude directly with a network-engineering system prompt, via the
+    shared llm_client module. Side effect: records token usage in
+    module-scoped _LAST_AI_USAGE.
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return None
-    try:
-        import anthropic  # type: ignore
-    except ImportError:
-        return None
-    client = anthropic.Anthropic(api_key=api_key)
-    try:
-        resp = client.messages.create(
-            model="claude-haiku-4-5",
-            max_tokens=600,
-            system=(
-                "You are a senior network engineer (CCIE/JNCIE-level). Diagnose the symptom "
-                "and respond with: (1) ROOT CAUSE in one sentence, (2) EVIDENCE bullets, "
-                "(3) REMEDIATION steps including exact CLI for Junos/EOS/FRR as relevant."
-            ),
-            messages=[{"role": "user", "content": prompt}],
-        )
-        usage = getattr(resp, "usage", None)
-        if usage is not None:
-            _LAST_AI_USAGE["input"] = int(getattr(usage, "input_tokens", 0) or 0)
-            _LAST_AI_USAGE["output"] = int(getattr(usage, "output_tokens", 0) or 0)
-        return resp.content[0].text if resp.content else ""
-    except (anthropic.APIError, anthropic.APIConnectionError, anthropic.RateLimitError) as e:
-        logger.warning("eval_harness LLM call failed: %s", e)
-        return None
+    text, usage = llm_client.query_claude(
+        "You are a senior network engineer (CCIE/JNCIE-level). Diagnose the symptom "
+        "and respond with: (1) ROOT CAUSE in one sentence, (2) EVIDENCE bullets, "
+        "(3) REMEDIATION steps including exact CLI for Junos/EOS/FRR as relevant.",
+        prompt,
+        model="claude-haiku-4-5",
+        max_tokens=600,
+    )
+    _LAST_AI_USAGE["input"] = usage.get("input", 0)
+    _LAST_AI_USAGE["output"] = usage.get("output", 0)
+    return text
 
 
 def _stub_agent(symptom: str) -> str:
