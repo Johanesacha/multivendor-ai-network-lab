@@ -194,7 +194,8 @@ def run_scenario(scenario_id: str, agent: str = "ai_command") -> dict[str, Any]:
     Run a single scenario end-to-end. The actual agent invocation is delegated
     to a callable resolved lazily (we only import here to avoid cycles).
 
-    Returns dict with: {symptom, agent_output, keyword_score, llm_score?, total_ms, scenario, usage}
+    Returns dict with: {symptom, agent_output, agent_path, stub_reason,
+    keyword_score, llm_score?, total_ms, scenario, usage}
     """
     scenario = get_scenario(scenario_id)
     if not scenario:
@@ -203,7 +204,7 @@ def run_scenario(scenario_id: str, agent: str = "ai_command") -> dict[str, Any]:
     symptom = synthesize_symptom(scenario)
     t0 = time.time()
 
-    agent_output, agent_usage = _invoke_agent_with_usage(agent, symptom)
+    agent_output, agent_usage, agent_path, stub_reason = _invoke_agent_with_usage(agent, symptom)
     elapsed_ms = int((time.time() - t0) * 1000)
 
     kscore = keyword_score(agent_output, scenario)
@@ -219,6 +220,8 @@ def run_scenario(scenario_id: str, agent: str = "ai_command") -> dict[str, Any]:
         "scenario_id": scenario_id,
         "scenario": {"title": scenario["title"], "category": scenario["category"], "severity": scenario["severity"]},
         "agent": agent,
+        "agent_path": agent_path,
+        "stub_reason": stub_reason,
         "symptom": symptom,
         "agent_output": agent_output,
         "keyword_score": kscore,
@@ -236,28 +239,72 @@ def run_scenario(scenario_id: str, agent: str = "ai_command") -> dict[str, Any]:
         tools_called=[agent],
         tokens=total_usage,
         status="ok",
-        extra={"scenario_id": scenario_id, "score": kscore["score"]},
+        extra={"scenario_id": scenario_id, "score": kscore["score"], "agent_path": agent_path},
     )
     return result
 
 
-def _invoke_agent_with_usage(agent: str, symptom: str) -> tuple[str, dict[str, int]]:
-    """Resolve and invoke the agent. Returns (output, usage_tokens)."""
+def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Aggregate a list of run_scenario() results into summary statistics for an
+    evaluation campaign.
+
+    Methodology: stub runs (agent_path == "stub" — the model under test was
+    unreachable and the deterministic offline fallback _stub_agent answered
+    instead) are excluded from the numeric averages below. A stub doesn't
+    diagnose anything, but keyword_score can still land in the 6-8/10 range
+    because the stub's boilerplate remediation text overlaps generic
+    troubleshooting vocabulary in several scenarios' keyword lists —
+    including it would silently inflate campaign-wide averages. The count of
+    excluded runs is reported so nothing is hidden.
+    """
+    def _mean(xs: list[float]) -> float | None:
+        return round(sum(xs) / len(xs), 2) if xs else None
+
+    stub_results = [r for r in results if r.get("agent_path") == "stub"]
+    live_results = [r for r in results if r.get("agent_path") != "stub"]
+
+    kw_scores = [r["keyword_score"]["score"] for r in live_results if r.get("keyword_score")]
+    llm_scores = [r["llm_score"]["score"] for r in live_results if r.get("llm_score")]
+
+    return {
+        "total_runs": len(results),
+        "included_runs": len(live_results),
+        "excluded_stub_runs": len(stub_results),
+        "mean_keyword_score": _mean(kw_scores),
+        "mean_llm_score": _mean(llm_scores),
+    }
+
+
+def _invoke_agent_with_usage(agent: str, symptom: str) -> tuple[str, dict[str, int], str, str | None]:
+    """Resolve and invoke the agent. Returns (output, usage_tokens, agent_path, stub_reason).
+
+    agent_path is "live" when a real model produced the output, or "stub" when
+    the deterministic offline fallback (_stub_agent) was used because the
+    model under test was unreachable or returned nothing. Stub runs must be
+    excluded from campaign aggregates (see aggregate_results) since they
+    don't diagnose anything but can still score deceptively well on keyword
+    overlap.
+    """
     if agent == "orchestrator":
         try:
             from pydantic_ai_orchestrator import run_orchestrator_structured  # type: ignore
             envelope = run_orchestrator_structured(symptom)
-            return envelope.get("rendered", ""), envelope.get("usage") or {"input": 0, "output": 0}
+            return envelope.get("rendered", ""), envelope.get("usage") or {"input": 0, "output": 0}, "live", None
         except (ImportError, AttributeError, KeyError) as e:
             logger.warning("orchestrator unavailable: %s", e)
-            return f"[orchestrator unavailable: {e}]\n" + _stub_agent(symptom), {"input": 0, "output": 0}
+            reason = f"orchestrator unavailable: {e}"
+            return f"[{reason}]\n" + _stub_agent(symptom), {"input": 0, "output": 0}, "stub", reason
     if agent == "ai_command":
         out = _ai_command_sync(symptom)
         usage = _pop_last_ai_usage()
         if out:
-            return out, usage
-        return _stub_agent(symptom), {"input": 0, "output": 0}
-    return _stub_agent(symptom), {"input": 0, "output": 0}
+            return out, usage, "live", None
+        return (
+            _stub_agent(symptom), {"input": 0, "output": 0}, "stub",
+            "ai_command returned no output (missing ANTHROPIC_API_KEY or API call failed)",
+        )
+    return _stub_agent(symptom), {"input": 0, "output": 0}, "stub", f"unknown agent: {agent!r}"
 
 
 _LAST_AI_USAGE: dict[str, int] = {"input": 0, "output": 0}
