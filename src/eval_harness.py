@@ -69,8 +69,23 @@ def _keyword_overlap(text: str, keywords: list[str]) -> tuple[int, list[str]]:
     return len(hits), hits
 
 
+# Reference length (chars) for a concise, well-formed diagnosis. Beyond this,
+# length_controlled_score in keyword_score() discounts proportionally — a
+# longer answer has a higher chance of incidentally containing more of the
+# expected keywords (restating context, listing every plausible cause) without
+# being more correct, and the raw score has no way to penalize that padding.
+_LENGTH_BUDGET_CHARS = 800
+
+
 def keyword_score(agent_output: str, scenario: dict[str, Any]) -> dict[str, Any]:
-    """Cheap, deterministic 0–10 score based on keyword overlap."""
+    """Cheap, deterministic 0–10 score based on keyword overlap.
+
+    Reports two scores: `score` (raw overlap, unchanged formula) and
+    `length_controlled_score` (the same overlap, discounted once the output
+    exceeds _LENGTH_BUDGET_CHARS) — see the module-level comment on
+    _LENGTH_BUDGET_CHARS for why. Both are kept so campaigns can compare
+    models on either basis rather than the harness silently picking one.
+    """
     rc_kw = scenario.get("expected_root_cause_keywords", [])
     rm_kw = scenario.get("expected_remediation_keywords", [])
     rc_hit, rc_hits = _keyword_overlap(agent_output, rc_kw)
@@ -80,11 +95,16 @@ def keyword_score(agent_output: str, scenario: dict[str, Any]) -> dict[str, Any]
     rm_score = (rm_hit / max(len(rm_kw), 1)) * 4.0
     score = round(rc_score + rm_score, 2)
 
+    length_penalty = min(1.0, _LENGTH_BUDGET_CHARS / max(len(agent_output), _LENGTH_BUDGET_CHARS))
+    length_controlled_score = round(score * length_penalty, 2)
+
     return {
         "score": score,
+        "length_controlled_score": length_controlled_score,
         "max": 10,
         "root_cause_hits": rc_hits,
         "remediation_hits": rm_hits,
+        "output_chars": len(agent_output),
         "method": "keyword",
     }
 
@@ -293,6 +313,10 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     judge_ok_results = [r for r in live_results if r.get("llm_score") and not r["llm_score"].get("error")]
 
     kw_scores = [r["keyword_score"]["score"] for r in live_results if r.get("keyword_score")]
+    lc_scores = [
+        r["keyword_score"]["length_controlled_score"] for r in live_results
+        if r.get("keyword_score") and "length_controlled_score" in r["keyword_score"]
+    ]
     llm_scores = [r["llm_score"]["score"] for r in judge_ok_results]
 
     return {
@@ -302,6 +326,7 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
         "excluded_judge_error_runs": len(judge_error_results),
         "scored_llm_runs": len(llm_scores),
         "mean_keyword_score": _mean(kw_scores),
+        "mean_length_controlled_score": _mean(lc_scores),
         "mean_llm_score": _mean(llm_scores),
     }
 
