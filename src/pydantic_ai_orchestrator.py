@@ -27,6 +27,8 @@ import re
 import time
 from typing import Any, Literal
 
+import llm_client
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -128,28 +130,11 @@ def _build_user_message(prompt: str, context: str | None) -> str:
 def _call_claude(system: str, user: str, model: str = "claude-haiku-4-5", max_tokens: int = 600) -> str:
     if not _has_anthropic():
         return ""
-    try:
-        import anthropic  # type: ignore
-    except ImportError:
-        return ""
-    try:
-        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-        resp = client.messages.create(
-            model=model, max_tokens=max_tokens, system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-        # Capture token usage for downstream GAIT recording
-        usage = getattr(resp, "usage", None)
-        if usage is not None:
-            _LAST_USAGE["input"] += int(getattr(usage, "input_tokens", 0) or 0)
-            _LAST_USAGE["output"] += int(getattr(usage, "output_tokens", 0) or 0)
-        return resp.content[0].text if resp.content else ""
-    except (anthropic.APIError, anthropic.APIConnectionError, anthropic.RateLimitError) as e:
-        logger.warning("Anthropic API call failed: %s", e)
-        return ""
-    except KeyError:
-        logger.error("ANTHROPIC_API_KEY missing from environment at call time")
-        return ""
+    text, usage = llm_client.query_claude(system, user, model=model, max_tokens=max_tokens)
+    # Capture token usage for downstream GAIT recording
+    _LAST_USAGE["input"] += usage.get("input", 0)
+    _LAST_USAGE["output"] += usage.get("output", 0)
+    return text or ""
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
