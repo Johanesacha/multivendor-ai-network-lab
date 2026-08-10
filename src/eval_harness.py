@@ -102,7 +102,7 @@ def llm_judge(agent_output: str, scenario: dict[str, Any]) -> dict[str, Any] | N
     try:
         resp = client.messages.create(
             model="claude-haiku-4-5",
-            max_tokens=400,
+            max_tokens=1000,
             messages=[{"role": "user", "content": prompt}],
         )
         text = resp.content[0].text if resp.content else "{}"
