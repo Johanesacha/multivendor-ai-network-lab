@@ -159,7 +159,10 @@ def llm_judge(
         "troubleshooting boilerplate that would apply to any incident?\n"
         "  - Grounding (10%): no hallucinated devices, peers, IPs, or facts "
         "not supported by the symptom.\n\n"
-        "Respond with strict JSON: {\"score\": <0-10>, \"reasoning\": \"...\"}"
+        "Respond with strict JSON on a single line: "
+        "{\"score\": <0-10>, \"reasoning\": \"...\"}. "
+        "The reasoning value must not contain literal newlines — write it as "
+        "one line, or use \\n if you need to represent a line break within it."
     )
     result = llm_client.query(judge_model_id, prompt, max_tokens=1000, timeout_s=60)
     usage = {"input": result.tokens.get("input", 0), "output": result.tokens.get("output", 0)}
@@ -176,7 +179,12 @@ def llm_judge(
         return {"score": 0, "method": "llm_judge", "model": judge_model_id, "max": 10, "error": True,
                 "usage": usage}
     try:
-        parsed = json.loads(m.group(0))
+        # strict=False tolerates literal control characters (unescaped
+        # newlines/tabs) inside JSON string values — the judge is asked to
+        # avoid them (see prompt above), but LLM output isn't guaranteed to
+        # comply, and this is the stdlib's built-in tolerant-parsing mode
+        # rather than a bespoke cleanup regex that only handles \n.
+        parsed = json.loads(m.group(0), strict=False)
     except json.JSONDecodeError as e:
         logger.warning("llm_judge failed: %s", e)
         return {"score": 0, "reasoning": f"judge JSON parse error: {e}", "method": "llm_judge",
