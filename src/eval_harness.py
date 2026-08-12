@@ -518,6 +518,19 @@ def _invoke_agent_with_usage(
     return _stub_agent(symptom), {"input": 0, "output": 0}, "stub", f"unknown agent: {agent!r}"
 
 
+# Per-model timeout override (seconds) for _ai_command_sync. Falls back to
+# _DEFAULT_TIMEOUT_S for any model not listed here.
+#
+# phi3.5:3.8b needs more room than the other Ollama models: a real 120-run
+# campaign (10 scenarios x 4 models x 3 repeats) at 300s still saw 5/30
+# phi3.5 runs time out and fall back to the stub agent, while qwen2.5:3b and
+# llama3.2:3b had zero timeouts at the same 300s on the same hardware.
+_DEFAULT_TIMEOUT_S = 300
+_TIMEOUT_OVERRIDES_S: dict[str, int] = {
+    "phi3.5:3.8b": 450,
+}
+
+
 def _ai_command_sync(prompt: str, model_id: str = "claude-haiku-4-5") -> tuple[str | None, dict[str, int]]:
     """Call the given model (Claude or a local Ollama model, via llm_client's
     registry) with a network-engineering system prompt. Returns (text, usage).
@@ -533,10 +546,8 @@ def _ai_command_sync(prompt: str, model_id: str = "claude-haiku-4-5") -> tuple[s
         max_tokens=600,
         # Local Ollama models on CPU can take 1-3 min for a full 600-token
         # diagnosis (vs seconds for the Claude API) — give them room rather
-        # than falsely stubbing out a model that just needs more time. Bumped
-        # from 180s to 300s after real-run testing showed llama3.2:3b and
-        # phi3.5:3.8b both exceeding 180s on a full diagnosis prompt.
-        timeout_s=300,
+        # than falsely stubbing out a model that just needs more time.
+        timeout_s=_TIMEOUT_OVERRIDES_S.get(model_id, _DEFAULT_TIMEOUT_S),
     )
     if result.error:
         logger.warning("ai_command (%s) failed: %s", model_id, result.error)
