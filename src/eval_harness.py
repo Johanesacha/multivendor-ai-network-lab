@@ -492,10 +492,12 @@ def _ai_command_sync(prompt: str, model_id: str = "claude-haiku-4-5") -> tuple[s
             "(3) REMEDIATION steps including exact CLI for Junos/EOS/FRR as relevant."
         ),
         max_tokens=600,
-        # Local Ollama models on CPU can take 1-2 min for a full 600-token
+        # Local Ollama models on CPU can take 1-3 min for a full 600-token
         # diagnosis (vs seconds for the Claude API) — give them room rather
-        # than falsely stubbing out a model that just needs more time.
-        timeout_s=180,
+        # than falsely stubbing out a model that just needs more time. Bumped
+        # from 180s to 300s after real-run testing showed llama3.2:3b and
+        # phi3.5:3.8b both exceeding 180s on a full diagnosis prompt.
+        timeout_s=300,
     )
     if result.error:
         logger.warning("ai_command (%s) failed: %s", model_id, result.error)
