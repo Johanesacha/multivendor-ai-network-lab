@@ -30,6 +30,9 @@ audit/
 *.tmp
 *.bak
 
+# eval_harness campaign output (raw run data, not source)
+src/campaign_results/
+
 # Secrets — never commit
 .env
 *.env

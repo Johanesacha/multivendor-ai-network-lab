@@ -336,6 +336,64 @@ def run_scenario(
     return result
 
 
+_CAMPAIGN_RESULTS_DIR = os.path.join(_HERE, "campaign_results")
+
+
+def run_campaign(
+    scenario_ids: list[str],
+    model_ids: list[str],
+    repeats: int = 3,
+    agent: str = "ai_command",
+    judge_model_id: str = "claude-haiku-4-5",
+    output_path: str | None = None,
+) -> str:
+    """
+    Run every (scenario, model, repeat) combination, appending each raw
+    run_scenario() result as one JSON line to output_path.
+
+    repeats defaults to 3 — fewer than that and you can't tell a real gap
+    between two models apart from ordinary sampling noise; 3+ runs per
+    (scenario, model) cell is the minimum to see the difference.
+
+    Writes one JSON object per line and flushes after every run, so a
+    long campaign against slow local models survives a crash/interrupt
+    with only the in-flight run lost, not the whole campaign. Returns the
+    path to the JSONL file written (auto-generated under
+    campaign_results/ if output_path is omitted) for chapter-4-style
+    offline analysis (pandas.read_json(path, lines=True), jq, etc.).
+    """
+    if output_path is None:
+        os.makedirs(_CAMPAIGN_RESULTS_DIR, exist_ok=True)
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        output_path = os.path.join(_CAMPAIGN_RESULTS_DIR, f"campaign-{ts}.jsonl")
+    else:
+        out_dir = os.path.dirname(output_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+
+    total = len(scenario_ids) * len(model_ids) * repeats
+    done = 0
+    with open(output_path, "a", encoding="utf-8") as f:
+        for scenario_id in scenario_ids:
+            for model_id in model_ids:
+                for rep in range(repeats):
+                    result = run_scenario(
+                        scenario_id,
+                        agent=agent,
+                        agent_model_id=model_id,
+                        judge_model_id=judge_model_id,
+                    )
+                    result["repeat"] = rep
+                    f.write(json.dumps(result, default=str) + "\n")
+                    f.flush()
+                    done += 1
+                    logger.info(
+                        "run_campaign: %d/%d done (scenario=%s model=%s rep=%d)",
+                        done, total, scenario_id, model_id, rep,
+                    )
+    return output_path
+
+
 def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     """
     Aggregate a list of run_scenario() results into summary statistics for an
