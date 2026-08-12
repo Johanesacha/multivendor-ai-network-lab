@@ -124,11 +124,17 @@ def keyword_score(agent_output: str, scenario: dict[str, Any]) -> dict[str, Any]
 JUDGE_MODEL = "claude-haiku-4-5"
 
 
-def llm_judge(symptom: str, agent_output: str, scenario: dict[str, Any]) -> dict[str, Any] | None:
+def llm_judge(
+    symptom: str, agent_output: str, scenario: dict[str, Any], judge_model_id: str = JUDGE_MODEL
+) -> dict[str, Any] | None:
     """
-    Use Anthropic claude-haiku-4-5 to score 0–10 with reasoning.
-    Returns None if ANTHROPIC_API_KEY is not set or anthropic SDK missing.
-    On success the returned dict includes a `usage` field with input/output tokens.
+    Use an LLM (default claude-haiku-4-5, via llm_client.query) to score 0–10
+    with reasoning. On success the returned dict includes a `usage` field
+    with input/output tokens.
+
+    judge_model_id stays fixed at claude-haiku-4-5 across model-comparison
+    campaigns (see run_scenario) so judge scores remain comparable between
+    runs of different agent models — only the agent under test should vary.
 
     The judge sees the symptom and a generic scoring rubric — NOT the
     scenario's expected_root_cause_keywords / expected_remediation_keywords
@@ -136,15 +142,6 @@ def llm_judge(symptom: str, agent_output: str, scenario: dict[str, Any]) -> dict
     which would leak the intended answer into an evaluation that's supposed
     to be independent of it.
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return None
-    try:
-        import anthropic  # type: ignore
-    except ImportError:
-        return None
-
-    client = anthropic.Anthropic(api_key=api_key)
     prompt = (
         "You are an expert network engineer judging an AI agent's incident "
         "diagnosis. You do NOT have an answer key — judge the diagnosis on its "
@@ -164,31 +161,31 @@ def llm_judge(symptom: str, agent_output: str, scenario: dict[str, Any]) -> dict
         "not supported by the symptom.\n\n"
         "Respond with strict JSON: {\"score\": <0-10>, \"reasoning\": \"...\"}"
     )
+    result = llm_client.query(judge_model_id, prompt, max_tokens=1000, timeout_s=60)
+    usage = {"input": result.tokens.get("input", 0), "output": result.tokens.get("output", 0)}
+
+    if result.error or not result.text:
+        logger.warning("llm_judge failed: %s", result.error)
+        return {
+            "score": 0, "reasoning": f"judge error: {result.error}", "method": "llm_judge",
+            "model": judge_model_id, "max": 10, "error": True, "usage": usage,
+        }
+
+    m = re.search(r"\{[\s\S]*\}", result.text)
+    if not m:
+        return {"score": 0, "method": "llm_judge", "model": judge_model_id, "max": 10, "error": True,
+                "usage": usage}
     try:
-        resp = client.messages.create(
-            model=JUDGE_MODEL,
-            max_tokens=1000,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = resp.content[0].text if resp.content else "{}"
-        usage = getattr(resp, "usage", None)
-        token_in = int(getattr(usage, "input_tokens", 0) or 0) if usage else 0
-        token_out = int(getattr(usage, "output_tokens", 0) or 0) if usage else 0
-        m = re.search(r"\{[\s\S]*\}", text)
-        if not m:
-            return {"score": 0, "method": "llm_judge", "model": JUDGE_MODEL, "max": 10, "error": True,
-                    "usage": {"input": token_in, "output": token_out}}
         parsed = json.loads(m.group(0))
-        parsed["method"] = "llm_judge"
-        parsed["model"] = JUDGE_MODEL
-        parsed["max"] = 10
-        parsed["usage"] = {"input": token_in, "output": token_out}
-        return parsed
-    except (anthropic.APIError, anthropic.APIConnectionError, anthropic.RateLimitError,
-            json.JSONDecodeError, KeyError, TypeError) as e:
+    except json.JSONDecodeError as e:
         logger.warning("llm_judge failed: %s", e)
-        return {"score": 0, "reasoning": f"judge error: {e}", "method": "llm_judge",
-                "model": JUDGE_MODEL, "max": 10, "error": True}
+        return {"score": 0, "reasoning": f"judge JSON parse error: {e}", "method": "llm_judge",
+                "model": judge_model_id, "max": 10, "error": True, "usage": usage}
+    parsed["method"] = "llm_judge"
+    parsed["model"] = judge_model_id
+    parsed["max"] = 10
+    parsed["usage"] = usage
+    return parsed
 
 
 def synthesize_symptom(scenario: dict[str, Any]) -> str:
@@ -255,13 +252,26 @@ def synthesize_symptom(scenario: dict[str, Any]) -> str:
     return f"Unknown fault type: {t}. Raw payload: {json.dumps(f)}"
 
 
-def run_scenario(scenario_id: str, agent: str = "ai_command") -> dict[str, Any]:
+def run_scenario(
+    scenario_id: str,
+    agent: str = "ai_command",
+    agent_model_id: str = "claude-haiku-4-5",
+    judge_model_id: str = "claude-haiku-4-5",
+) -> dict[str, Any]:
     """
     Run a single scenario end-to-end. The actual agent invocation is delegated
     to a callable resolved lazily (we only import here to avoid cycles).
 
+    agent_model_id selects the model under test (any MODEL_REGISTRY key in
+    llm_client — Claude or a local Ollama model); default is claude-haiku-4-5
+    for full backward compatibility. judge_model_id defaults to (and normally
+    stays) claude-haiku-4-5 regardless of agent_model_id, so judge scores stay
+    comparable across model-comparison runs — only the agent under test should
+    vary between runs being compared.
+
     Returns dict with: {symptom, agent_output, agent_path, stub_reason,
-    keyword_score, llm_score?, total_ms, scenario, model_cost, eval_overhead_cost}
+    keyword_score, llm_score?, total_ms, scenario, model_cost,
+    eval_overhead_cost, agent_model_id, judge_model_id}
     """
     scenario = get_scenario(scenario_id)
     if not scenario:
@@ -270,11 +280,13 @@ def run_scenario(scenario_id: str, agent: str = "ai_command") -> dict[str, Any]:
     symptom = synthesize_symptom(scenario)
     t0 = time.time()
 
-    agent_output, agent_usage, agent_path, stub_reason = _invoke_agent_with_usage(agent, symptom)
+    agent_output, agent_usage, agent_path, stub_reason = _invoke_agent_with_usage(
+        agent, symptom, agent_model_id
+    )
     elapsed_ms = int((time.time() - t0) * 1000)
 
     kscore = keyword_score(agent_output, scenario)
-    jscore = llm_judge(symptom, agent_output, scenario)
+    jscore = llm_judge(symptom, agent_output, scenario, judge_model_id)
     judge_usage = (jscore or {}).get("usage", {"input": 0, "output": 0}) if isinstance(jscore, dict) else {"input": 0, "output": 0}
 
     # Kept separate rather than blended: "how much did running this agent
@@ -291,6 +303,8 @@ def run_scenario(scenario_id: str, agent: str = "ai_command") -> dict[str, Any]:
         "scenario_id": scenario_id,
         "scenario": {"title": scenario["title"], "category": scenario["category"], "severity": scenario["severity"]},
         "agent": agent,
+        "agent_model_id": agent_model_id,
+        "judge_model_id": judge_model_id,
         "agent_path": agent_path,
         "stub_reason": stub_reason,
         "symptom": symptom,
@@ -311,7 +325,13 @@ def run_scenario(scenario_id: str, agent: str = "ai_command") -> dict[str, Any]:
         tools_called=[agent],
         tokens=total_usage,
         status="ok",
-        extra={"scenario_id": scenario_id, "score": kscore["score"], "agent_path": agent_path},
+        extra={
+            "scenario_id": scenario_id,
+            "score": kscore["score"],
+            "agent_path": agent_path,
+            "agent_model_id": agent_model_id,
+            "judge_model_id": judge_model_id,
+        },
     )
     return result
 
@@ -366,7 +386,9 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _invoke_agent_with_usage(agent: str, symptom: str) -> tuple[str, dict[str, int], str, str | None]:
+def _invoke_agent_with_usage(
+    agent: str, symptom: str, agent_model_id: str = "claude-haiku-4-5"
+) -> tuple[str, dict[str, int], str, str | None]:
     """Resolve and invoke the agent. Returns (output, usage_tokens, agent_path, stub_reason).
 
     agent_path is "live" when a real model produced the output, or "stub" when
@@ -375,6 +397,9 @@ def _invoke_agent_with_usage(agent: str, symptom: str) -> tuple[str, dict[str, i
     excluded from campaign aggregates (see aggregate_results) since they
     don't diagnose anything but can still score deceptively well on keyword
     overlap.
+
+    agent_model_id is only honored for agent="ai_command" — the orchestrator
+    path (agent="orchestrator") always uses its own internal model selection.
     """
     if agent == "orchestrator":
         try:
@@ -386,43 +411,37 @@ def _invoke_agent_with_usage(agent: str, symptom: str) -> tuple[str, dict[str, i
             reason = f"orchestrator unavailable: {e}"
             return f"[{reason}]\n" + _stub_agent(symptom), {"input": 0, "output": 0}, "stub", reason
     if agent == "ai_command":
-        out = _ai_command_sync(symptom)
-        usage = _pop_last_ai_usage()
+        out, usage = _ai_command_sync(symptom, agent_model_id)
         if out:
             return out, usage, "live", None
         return (
             _stub_agent(symptom), {"input": 0, "output": 0}, "stub",
-            "ai_command returned no output (missing ANTHROPIC_API_KEY or API call failed)",
+            f"ai_command ({agent_model_id}) returned no output (missing credentials, model unreachable, or empty response)",
         )
     return _stub_agent(symptom), {"input": 0, "output": 0}, "stub", f"unknown agent: {agent!r}"
 
 
-_LAST_AI_USAGE: dict[str, int] = {"input": 0, "output": 0}
-
-
-def _pop_last_ai_usage() -> dict[str, int]:
-    u = dict(_LAST_AI_USAGE)
-    _LAST_AI_USAGE["input"] = 0
-    _LAST_AI_USAGE["output"] = 0
-    return u
-
-
-def _ai_command_sync(prompt: str) -> str | None:
-    """Call Claude directly with a network-engineering system prompt, via the
-    shared llm_client module. Side effect: records token usage in
-    module-scoped _LAST_AI_USAGE.
+def _ai_command_sync(prompt: str, model_id: str = "claude-haiku-4-5") -> tuple[str | None, dict[str, int]]:
+    """Call the given model (Claude or a local Ollama model, via llm_client's
+    registry) with a network-engineering system prompt. Returns (text, usage).
     """
-    text, usage = llm_client.query_claude(
-        "You are a senior network engineer (CCIE/JNCIE-level). Diagnose the symptom "
-        "and respond with: (1) ROOT CAUSE in one sentence, (2) EVIDENCE bullets, "
-        "(3) REMEDIATION steps including exact CLI for Junos/EOS/FRR as relevant.",
+    result = llm_client.query(
+        model_id,
         prompt,
-        model="claude-haiku-4-5",
+        system=(
+            "You are a senior network engineer (CCIE/JNCIE-level). Diagnose the symptom "
+            "and respond with: (1) ROOT CAUSE in one sentence, (2) EVIDENCE bullets, "
+            "(3) REMEDIATION steps including exact CLI for Junos/EOS/FRR as relevant."
+        ),
         max_tokens=600,
+        # Local Ollama models on CPU can take 1-2 min for a full 600-token
+        # diagnosis (vs seconds for the Claude API) — give them room rather
+        # than falsely stubbing out a model that just needs more time.
+        timeout_s=180,
     )
-    _LAST_AI_USAGE["input"] = usage.get("input", 0)
-    _LAST_AI_USAGE["output"] = usage.get("output", 0)
-    return text
+    if result.error:
+        logger.warning("ai_command (%s) failed: %s", model_id, result.error)
+    return result.text, dict(result.tokens)
 
 
 def _stub_agent(symptom: str) -> str:
