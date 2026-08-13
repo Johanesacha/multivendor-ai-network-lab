@@ -525,6 +525,17 @@ def _invoke_agent_with_usage(
 # campaign (10 scenarios x 4 models x 3 repeats) at 300s still saw 5/30
 # phi3.5 runs time out and fall back to the stub agent, while qwen2.5:3b and
 # llama3.2:3b had zero timeouts at the same 300s on the same hardware.
+#
+# KNOWN LIMITATION — cve-001 x phi3.5:3.8b: this specific (scenario, model)
+# cell has timed out twice in a row, at two different timeout ceilings
+# (300s, then 450s after the bump above) — the second attempt's own
+# elapsed time (452.1s) landed right at the new ceiling too. That's a
+# reproducible pattern tied to this scenario's prompt, not sampling noise
+# or a one-off infra hiccup (the other 3 scenarios that failed at 300s all
+# succeeded live at 450s). Treat cve-001/phi3.5:3.8b as a structural gap in
+# the local-model comparison data on this hardware — raising the timeout
+# further is not expected to fix it, and it should be reported as an
+# explicit exclusion in chapter-4 analysis rather than retried.
 _DEFAULT_TIMEOUT_S = 300
 _TIMEOUT_OVERRIDES_S: dict[str, int] = {
     "phi3.5:3.8b": 450,
