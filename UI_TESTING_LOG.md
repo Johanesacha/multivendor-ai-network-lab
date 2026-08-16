@@ -6,6 +6,16 @@ stack complète lancée (13 conteneurs `network-lab/`), `ANTHROPIC_API_KEY` conf
 `localStorage.MVLAB_API_KEY` réglée dans le navigateur (sinon tout POST renvoie 403 —
 voir SETUP_GUIDE.md §7).
 
+> **Mise à jour (session ultérieure) :** tous les bugs 🔴 listés ci-dessous comme
+> "documenté seulement" ont depuis été **corrigés et re-testés par clic réel** —
+> voir le tableau récapitulatif en bas de page pour le détail (cause racine, fix,
+> commit). Le texte narratif original de chaque section ci-dessous est laissé tel
+> quel (c'est le récit du diagnostic initial) ; seul le tableau final reflète l'état
+> actuel. Un bug supplémentaire non documenté dans cette passe a aussi été trouvé et
+> corrigé : le nom de clé `localStorage` différait entre `demo/index.html` et
+> `src/app.js` (`MVLAB_API_KEY` vs `mvlab_api_key`), cassant le bouton Run de
+> l'Eval Harness selon la page suivie pour la config initiale.
+
 **Comment lire ce document** : pour chaque panneau — ce qu'il fait, une action concrète
 que tu peux reproduire toi-même (bouton à cliquer ou requête à lancer), le résultat
 exact obtenu chez moi, et les anomalies constatées. Les captures d'écran ne sont pas
@@ -533,21 +543,25 @@ l'UI affiche un faux état "down" — voir SETUP_GUIDE.md pour les détails comp
 |---|---|---|---|---|---|
 | 1 | Agent Chat | 🔴 UI | Champ de saisie masqué par le dock ouvert | CSS `!important` figeait le dock en position ouverte en permanence | ✅ **corrigé** (Partie 1) |
 | 2 | 6 panneaux (dock, alertes, topo, terminal, ribbon, triage) | 🔴 a11y | `aria-hidden` posé sur un élément encore focus | Pas de `blur()` avant `aria-hidden=true` | ✅ **corrigé** (Partie 1) |
-| 3 | Fleet Audit | 🔴 backend | Toujours "Demo data", jamais de vraie analyse | Nom de fichier attendu (`nl-ams-...`) ≠ nom réel sur disque (`ams-...`) | 📝 documenté seulement |
-| 4 | AI Command | 🔴 backend | Étiquette "Qwen3" alors que c'est Claude qui répond | Texte codé en dur dans le frontend, ignore le provider réel | 📝 documenté seulement |
-| 5 | AI Command / Doc Search / LLM en général | 🔴 perf | 30-60s+ de latence, parfois `ERR_ABORTED` | `_llm_query()` tente Ollama puis Docker Model Runner (60s chacun) avant Claude | 📝 documenté seulement |
-| 6 | CLI Transport | 🔴 infra | Proxy HTTP jamais démarré, 0/10 partout | `CLI_PROXY_PASSWORD` jamais passé aux conteneurs dans `docker-compose.yml` | 📝 documenté seulement |
-| 7 | Nornir — BGP Health Check | 🔴 backend | Tous les routeurs sains classés "WARN" | Recherche de sous-chaîne `"down"` qui matche l'en-tête de colonne `Up/Down` | 📝 documenté seulement |
-| 8 | NAPALM, Deep Analysis | 🟡 UX | Données figées présentées comme si live | Datasets codés en dur dans `demo/index.html`, non liés au device sélectionné | 📝 documenté seulement |
-| 9 | Syslog, SNMP Traps | 🟡 UX | Badge "live receiver" trompeur | Vrai récepteur UDP, mais contenu 100% injecté par `inject_demo_syslog()` | 📝 documenté seulement |
-| 10 | SuzieQ | 🟡 UX | Filtre "FRR" toujours 0 résultat | Le parseur ne couvre que les 16 configs statiques, jamais les routeurs FRR | 📝 documenté seulement |
-| 11 | Eval Harness | 🟡 backend | LLM Judge renvoie parfois `score:0,error:true` | `max_tokens=400` tronque le JSON du juge sur les diagnostics longs | 📝 déjà documenté (SETUP_GUIDE Bug #3) |
-| 12 | Chaos Monkey | 🔴 Windows | Break/Fix ne touchent jamais les routeurs | `subprocess` perd les antislashs Windows en appelant `bash.exe` | 📝 déjà documenté (SETUP_GUIDE Bug #4) |
+| 3 | Fleet Audit | 🔴 backend | Toujours "Demo data", jamais de vraie analyse | Nom de fichier attendu (`nl-ams-...`) ≠ nom réel sur disque (`ams-...`), **+ un deuxième bug** : `runFleetAudit()` attendait une forme de réponse (`data.devices`/`data.summary`) que le backend n'a jamais renvoyée (vraie forme : `results`/`total_errors` à plat) | ✅ **corrigé** (session ultérieure) — testé par clic réel : `0 CRITICAL/17 WARNINGS/120 PASSED/95 AVG SCORE` (données live) au lieu du `8/24/248/79` figé |
+| 4 | AI Command | 🔴 backend | Étiquette "Qwen3" alors que c'est Claude qui répond | Texte codé en dur dans le frontend, ignore le provider réel | ✅ **déjà corrigé avant cette passe** (vérifié : `renderAIResult()` utilise maintenant `llmProviderLabel(provider)` avec le provider réel renvoyé par le backend) |
+| 5 | AI Command / Doc Search / LLM en général | 🔴 perf | 30-60s+ de latence, parfois `ERR_ABORTED` | `_llm_query()` tente Ollama puis Docker Model Runner (60s chacun) avant Claude | ✅ **déjà corrigé avant cette passe** (vérifié : `_ping_ollama()` court-circuite vers Claude en ~2s si le local est injoignable) |
+| 6 | CLI Transport | 🔴 infra | Proxy HTTP jamais démarré, 0/10 partout | `CLI_PROXY_PASSWORD` jamais passé aux conteneurs, **+ un deuxième bug** : le proxy se bind par défaut sur `127.0.0.1` dans le conteneur, injoignable via le port-mapping Docker même une fois le mot de passe corrigé | ✅ **corrigé** (session ultérieure) — testé par clic réel : `10/10 devices · 293ms` au lieu de `0/10` |
+| 7 | Nornir — BGP Health Check | 🔴 backend | Tous les routeurs sains classés "WARN" | Recherche de sous-chaîne `"down"` qui matche l'en-tête de colonne `Up/Down` | ✅ **corrigé** (session ultérieure) — testé par clic réel : `4 OK/0 WARNING` au lieu de `4 WARNING/0 OK` |
+| 8 | NAPALM | 🟡 UX→🔴 confirmé mort | Données figées présentées comme si live | **Confirmé plus grave que documenté** : zéro appel API, 100% statique, contrairement à `mockCmd`/`mockSnapshot` qui branchent bien sur l'état live | ✅ **corrigé** (session ultérieure) — les 4 boutons appellent maintenant les vraies routes `/api/napalm/*` (poll de job async), testé par clic réel : `BGP Status DE-FRA (LIVE)` avec vrais compteurs de peers |
+| 8b | Deep Analysis / Log Intelligence / Config Drift / Security Audit | 🟡 UX | Données figées présentées comme si live, sans étiquette | Confirmé 100% statique (aucun appel API), même en mode LIVE | ✅ **partiellement corrigé** — étiquetage honnête ajouté (`⚪ DEMO`, "Demo Narrative") au lieu du silence trompeur ; pas re-câblé en live (hétérogénéité Junos/EOS/FRR + pas de matériel réel derrière les 16 configs statiques rend un vrai câblage live peu significatif ici) — **non re-testé par clic réel dans cette passe** (friction de navigation dans l'environnement de test, voir résumé final) |
+| 9 | Syslog, SNMP Traps | 🟡 UX | Badge "live receiver" trompeur | Vrai récepteur UDP, mais contenu 100% injecté par `inject_demo_syslog()` | ⚪ **limitation connue, pas un bug** — comportement intentionnel documenté |
+| 10 | SuzieQ | 🟡 UX | Filtre "FRR" toujours 0 résultat | Le parseur ne couvre que les 16 configs statiques, jamais les routeurs FRR | ⚪ **limitation connue, pas un bug** — le filtre ne peut physiquement rien retourner par design actuel |
+| 11 | Eval Harness | 🟡 backend | LLM Judge renvoie parfois `score:0,error:true` | `max_tokens=400` tronque le JSON du juge sur les diagnostics longs | ✅ **déjà corrigé avant cette passe** (vérifié : `max_tokens=1000` + consigne JSON strict dans `llm_judge()`) |
+| 12 | Chaos Monkey | 🔴 Windows | Break/Fix ne touchent jamais les routeurs | `subprocess` perd les antislashs Windows en appelant `bash.exe`, **+ un deuxième bug plus profond** : `"bash"` résout vers le stub WSL de `C:\Windows\System32`, pas Git Bash, à cause de l'ordre de résolution natif de Win32 `CreateProcess` (System32 passe avant `PATH`) | ✅ **corrigé** (session ultérieure) — `shutil.which("bash")` + conversion de chemin POSIX ; testé par clic réel + `vtysh` avant/après : le timer Up/Down de la session ciblée s'est bien réinitialisé au moment du clic |
+| 13 | `requirements.txt` | 🟡 deps | `napalm` et `pyyaml` utilisés mais jamais déclarés | Dégradation silencieuse (NAPALM EOS, Auto-Remediate) si absent du venv | ✅ **corrigé** (session ultérieure) — les deux ajoutés avec commentaire expliquant l'impact s'ils manquent |
+| 14 | `demo/index.html` / `src/app.js` | 🔴 auth | Bouton Run de l'Eval Harness → "Unauthorized" | `localStorage['MVLAB_API_KEY']` (demo) vs `localStorage['mvlab_api_key']` (app.js) — deux clés différentes sous la même origine | ✅ **corrigé** (session ultérieure, Phase 0 de la mission) — testé par clic réel sur les deux pages |
 
-**Tout le reste testé (≈30 autres panneaux) fonctionne comme attendu** — soit en LIVE
-(donnée réelle, vérifiée croisée avec `vtysh`/`docker exec` à chaque fois que c'était
-possible), soit en DEMO clairement dans l'esprit du projet (portfolio/démo, pas un
-outil de prod — cf. `README.md` § "Engineering notes"). Le détail panneau par panneau
-ci-dessus donne, pour chacun, l'action exacte à reproduire et le résultat attendu.
+**Tout le reste testé (≈30 autres panneaux) fonctionnait déjà comme attendu** dans la
+passe originale — soit en LIVE (donnée réelle, vérifiée croisée avec `vtysh`/
+`docker exec`), soit en DEMO clairement dans l'esprit du projet (portfolio/démo, pas un
+outil de prod — cf. `README.md` § "Engineering notes"). Ces panneaux n'ont pas été
+re-testés un par un dans la session de correction (rien n'y avait changé) — voir le
+résumé final de cette session pour le détail de ce qui a été re-vérifié par clic réel.
 
 

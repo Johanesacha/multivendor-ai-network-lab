@@ -35,21 +35,32 @@ pour ton mémoire).
    ```
    ./venv/Scripts/python.exe app.py
    ```
-2. Ouvre http://localhost:5757 dans ton navigateur.
+2. Ouvre http://localhost:5757/demo/index.html dans ton navigateur (l'interface
+   complète — `http://localhost:5757` tout court ouvre une version plus simple qui a
+   aussi un onglet Eval Harness équivalent, avec le même mécanisme de campagne).
 3. Sélectionne n'importe quel appareil dans la liste de gauche (nécessaire
    pour faire apparaître les onglets), puis clique sur l'onglet **🧪 Eval
    Harness**.
-4. Coche les scénarios et modèles voulus (tout est coché par défaut), règle
-   le nombre de répétitions, clique **▶ Lancer**.
+4. Dans le tableau **🔬 Multi-Model Comparison** (en bas du panneau) : coche les
+   scénarios et modèles voulus (tout est coché par défaut — décoche ce que tu ne
+   veux pas), règle le nombre de répétitions (**Repeats**), clique **▶ Run
+   Campaign**. C'est le même mécanisme que la ligne de commande (Option 1) —
+   `run_campaign()` derrière les deux.
 5. Le rapport s'affiche à l'écran une fois terminé, avec des boutons
    **📋 Copier** et **💾 Télécharger .md**.
 
-⚠️ Si le bouton **Lancer** affiche une erreur "unauthorized" : ouvre la
+   *(Le bloc au-dessus, avec un seul menu déroulant de scénario et un bouton
+   **▶ Run**, est un testeur rapide à un seul scénario/modèle à la fois — utile
+   pour un test ponctuel, mais ce n'est pas la campagne multi-modèle.)*
+
+⚠️ Si le bouton **Run Campaign** affiche une erreur "unauthorized" : ouvre la
 console du navigateur (touche `F12`) et tape une fois (la clé est dans
 `src/.env`, ligne `MVLAB_API_KEY=`) :
 ```js
 localStorage.setItem("MVLAB_API_KEY", "TA_CLE_ICI")
 ```
+Cette même clé fonctionne sur `demo/index.html` et sur `http://localhost:5757`
+(les deux pages partagent maintenant la même convention de nom).
 
 ## À savoir
 
