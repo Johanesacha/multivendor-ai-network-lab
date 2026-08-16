@@ -33,7 +33,11 @@ _SCENARIOS_FILE = os.path.join(_HERE, "scenarios.json")
 
 
 def load_scenarios() -> list[dict[str, Any]]:
-    with open(_SCENARIOS_FILE) as f:
+    # encoding="utf-8" is required, not cosmetic: scenarios.json contains
+    # non-ASCII characters (↔, —) in scenario titles, and open() without an
+    # explicit encoding uses the OS default (cp1252 on Windows), which
+    # silently mojibakes them instead of raising.
+    with open(_SCENARIOS_FILE, encoding="utf-8") as f:
         return json.load(f)["scenarios"]
 
 

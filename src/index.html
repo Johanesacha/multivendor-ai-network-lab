@@ -207,6 +207,7 @@ header h1{font-size:16px;font-weight:700;color:var(--accent);white-space:nowrap;
     <div class="tab" data-tab="reports"  onclick="switchTab(this)">📋 Reports</div>
     <div class="tab" data-tab="topo"    onclick="switchTab(this);initTopoTab()">🗺️ Topology</div>
     <div class="tab" data-tab="napalm"  onclick="switchTab(this);initNapalmTab()">🔧 NAPALM</div>
+    <div class="tab" data-tab="eval"    onclick="switchTab(this);initEvalTab()">🧪 Eval Harness</div>
     <div class="tab" data-tab="history"  onclick="switchTab(this)">📜 History</div>
   </div>
 
@@ -464,6 +465,50 @@ header h1{font-size:16px;font-weight:700;color:var(--accent);white-space:nowrap;
           <b style="color:#a78bfa">⬇ Full Collect</b> — All data → JSON file<br>
           <b style="color:#3fb950">📸 PRE/POST</b> — Maintenance snapshots + diff<br><br>
           <span style="color:var(--yellow)">All 53 sites · 414 devices · Auth: SSH key (read-only)</span>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Eval Harness ── -->
+    <div class="tp" id="tab-eval">
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap">
+        <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Répétitions :</span>
+        <input id="eval-repeats" type="number" min="1" value="3" style="width:56px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 6px;font-size:12px"/>
+        <button class="btn p" id="eval-run-btn" onclick="evalRunCampaign()" style="font-weight:700">▶ Lancer</button>
+        <button class="btn" onclick="clearEval()">✕ Clear</button>
+        <span style="color:var(--muted);font-size:11px">Compare plusieurs modèles (Claude + modèles locaux Ollama) sur les mêmes scénarios d'incident</span>
+      </div>
+      <!-- Progress -->
+      <div id="eval-progress" style="display:none;flex-shrink:0;margin-top:6px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="spin"></span>
+          <span id="eval-prog-msg" style="font-size:12px;color:var(--accent)">Starting...</span>
+        </div>
+        <div style="background:var(--bg3);border-radius:4px;height:4px;margin-top:4px;overflow:hidden">
+          <div id="eval-prog-fill" style="height:100%;background:var(--accent);width:0%;transition:width .3s"></div>
+        </div>
+      </div>
+      <!-- Selection -->
+      <div style="display:flex;gap:12px;flex-shrink:0;min-height:0;flex:0 0 auto">
+        <div class="asec" style="flex:1;max-height:220px;overflow-y:auto">
+          <h4>📋 Scénarios <span style="float:right;cursor:pointer;color:var(--accent)" onclick="evalSelectAllScenarios(true)">tout</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="evalSelectAllScenarios(false)">aucun</span></h4>
+          <div id="eval-scenarios">Chargement…</div>
+        </div>
+        <div class="asec" style="flex:1;max-height:220px;overflow-y:auto">
+          <h4>🤖 Modèles <span style="float:right;cursor:pointer;color:var(--accent)" onclick="evalSelectAllModels(true)">tout</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="evalSelectAllModels(false)">aucun</span></h4>
+          <div id="eval-models">Chargement…</div>
+        </div>
+      </div>
+      <!-- Report -->
+      <div id="eval-output" style="flex:1;overflow-y:auto;min-height:0;margin-top:8px">
+        <div style="color:var(--muted);text-align:center;padding:60px;font-size:13px">
+          <div style="font-size:32px;margin-bottom:12px">🧪</div>
+          <b style="color:var(--text)">Eval Harness — comparaison multi-modèle</b><br><br>
+          <span style="font-size:11px">
+          Sélectionne des scénarios et des modèles ci-dessus puis clique <b style="color:var(--accent)">▶ Lancer</b>.<br>
+          Chaque combinaison (scénario × modèle × répétition) exécute un diagnostic réel et le fait noter par un juge LLM.<br><br>
+          <span style="color:var(--yellow)">Les modèles locaux (Ollama) peuvent être lents — le run peut prendre plusieurs minutes à plusieurs heures selon la sélection.</span>
           </span>
         </div>
       </div>

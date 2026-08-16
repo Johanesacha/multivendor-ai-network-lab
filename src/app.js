@@ -5896,3 +5896,145 @@ function switchTabById(tabId) {
   const tab = document.querySelector(`[data-tab="${tabId}"]`);
   if (tab) switchTab(tab);
 }
+
+// ── Eval Harness ──────────────────────────────────────────────────────────────
+// Same job-polling pattern as the NAPALM tab (_napPollJob et al. above): a
+// POST kicks off a background campaign server-side and returns a job_id,
+// this tab polls /api/eval/jobs/<id> until status is "done"/"error". All the
+// actual evaluation logic lives server-side in eval_harness.py — this file
+// only renders what the server already computed (run_campaign +
+// generate_report_markdown), same as run_evaluation_cli.py on the CLI side.
+let _evalPoll = null;
+let _evalScenarios = [];
+let _evalModels = [];
+let _evalLastReport = null;
+
+async function initEvalTab() {
+  if (_evalScenarios.length && _evalModels.length) return; // already loaded this session
+  try {
+    const [rs, rm] = await Promise.all([
+      fetch(`${API}/eval/scenarios`),
+      fetch(`${API}/eval/models`),
+    ]);
+    _evalScenarios = await rs.json();
+    _evalModels = await rm.json();
+    _evalRenderCheckboxes();
+  } catch (e) {
+    document.getElementById("eval-scenarios").innerHTML =
+      `<span style="color:var(--red)">Erreur de chargement : ${e.message}</span>`;
+  }
+}
+
+function _evalRenderCheckboxes() {
+  document.getElementById("eval-scenarios").innerHTML = _evalScenarios.map(s => `
+    <label style="display:flex;align-items:center;gap:5px;font-size:11px;padding:2px 0;cursor:pointer">
+      <input type="checkbox" class="eval-sc-cb" value="${s.id}" checked/>
+      <code style="color:var(--accent)">${s.id}</code> — ${s.title}
+    </label>`).join("");
+  document.getElementById("eval-models").innerHTML = _evalModels.map(m => `
+    <label style="display:flex;align-items:center;gap:5px;font-size:11px;padding:2px 0;cursor:pointer">
+      <input type="checkbox" class="eval-mo-cb" value="${m.id}" checked/>
+      ${m.id} <span style="color:var(--muted)">(${m.provider})</span>
+    </label>`).join("");
+}
+
+function evalSelectAllScenarios(checked) {
+  document.querySelectorAll(".eval-sc-cb").forEach(cb => cb.checked = checked);
+}
+function evalSelectAllModels(checked) {
+  document.querySelectorAll(".eval-mo-cb").forEach(cb => cb.checked = checked);
+}
+
+async function evalRunCampaign() {
+  const scenarios = [...document.querySelectorAll(".eval-sc-cb:checked")].map(cb => cb.value);
+  const models = [...document.querySelectorAll(".eval-mo-cb:checked")].map(cb => cb.value);
+  const repeats = parseInt(document.getElementById("eval-repeats").value, 10) || 3;
+  if (!scenarios.length) { _evalShowError("Sélectionne au moins un scénario."); return; }
+  if (!models.length) { _evalShowError("Sélectionne au moins un modèle."); return; }
+
+  document.getElementById("eval-run-btn").disabled = true;
+  _evalShowProgress("Démarrage…", 0);
+  try {
+    const r = await fetch(`${API}/eval/run`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({scenarios, models, repeats}),
+    });
+    const d = await r.json();
+    if (d.error) {
+      _evalHideProgress(); _evalShowError(d.error);
+      document.getElementById("eval-run-btn").disabled = false;
+      return;
+    }
+    _evalPollJob(d.job_id);
+  } catch (e) {
+    _evalHideProgress(); _evalShowError(e.message);
+    document.getElementById("eval-run-btn").disabled = false;
+  }
+}
+
+function _evalPollJob(jobId) {
+  if (_evalPoll) clearInterval(_evalPoll);
+  _evalPoll = setInterval(async () => {
+    try {
+      const r = await fetch(`${API}/eval/jobs/${jobId}`);
+      const j = await r.json();
+      _evalShowProgress(j.message, j.progress);
+      if (j.status === "done") {
+        clearInterval(_evalPoll);
+        _evalHideProgress();
+        document.getElementById("eval-run-btn").disabled = false;
+        _evalRenderReport(j.result);
+      } else if (j.status === "error") {
+        clearInterval(_evalPoll);
+        _evalHideProgress();
+        document.getElementById("eval-run-btn").disabled = false;
+        _evalShowError(j.message);
+      }
+    } catch (e) {}
+  }, 2000);
+}
+
+function _evalShowProgress(msg, pct) {
+  document.getElementById("eval-progress").style.display = "block";
+  document.getElementById("eval-prog-msg").textContent = msg || "…";
+  document.getElementById("eval-prog-fill").style.width = (pct || 0) + "%";
+}
+function _evalHideProgress() {
+  document.getElementById("eval-progress").style.display = "none";
+}
+function _evalShowError(msg) {
+  document.getElementById("eval-output").innerHTML =
+    `<div style="color:var(--red);padding:20px;text-align:center">❌ ${_evalEsc(msg)}</div>`;
+}
+function _evalEsc(s) {
+  return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function _evalRenderReport(result) {
+  _evalLastReport = result.report_markdown;
+  document.getElementById("eval-output").innerHTML = `
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span>📄 JSONL : <code style="color:var(--accent)">${_evalEsc(result.jsonl_path)}</code> · ${result.total_runs} runs</span>
+      <div class="spacer"></div>
+      <button class="btn" onclick="evalCopyReport()">📋 Copier</button>
+      <button class="btn" onclick="evalDownloadReport()">💾 Télécharger .md</button>
+    </div>
+    <pre class="out-pre" style="max-height:none">${_evalEsc(result.report_markdown)}</pre>
+  `;
+}
+function evalCopyReport() {
+  if (_evalLastReport) navigator.clipboard.writeText(_evalLastReport);
+}
+function evalDownloadReport() {
+  if (!_evalLastReport) return;
+  const blob = new Blob([_evalLastReport], {type: "text/markdown"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "rapport_evaluation.md";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function clearEval() {
+  _evalLastReport = null;
+  document.getElementById("eval-output").innerHTML =
+    '<div style="color:var(--muted);text-align:center;padding:60px;font-size:13px">Sélectionne des scénarios et des modèles puis clique sur ▶ Lancer.</div>';
+}
