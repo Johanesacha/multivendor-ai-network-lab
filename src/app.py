@@ -13221,6 +13221,46 @@ def _find_sim_script() -> str:
 
 _SIM_SCRIPT = _find_sim_script()
 
+
+def _to_bash_argv_path(win_path: str) -> str:
+    """Convert a Windows path to the POSIX form Git Bash expects (e.g.
+    C:\\foo\\bar -> /c/foo/bar) before handing it to a bash argv list.
+    No-op on macOS/Linux (no drive-letter prefix to match).
+    """
+    p = os.path.abspath(win_path).replace("\\", "/")
+    if len(p) > 1 and p[1] == ":":
+        p = "/" + p[0].lower() + p[2:]
+    return p
+
+
+_BASH_EXE = None  # resolved lazily, cached — see _resolve_bash_exe()
+
+
+def _resolve_bash_exe() -> str:
+    """Return the bash executable to use for subprocess.run(["bash", ...]).
+
+    On Windows, passing the bare string "bash" to subprocess.run() is a trap:
+    Win32's CreateProcess resolves an unqualified executable name via its own
+    search order (app dir, current dir, System32, Windows dir, *then* PATH) --
+    NOT the shell's own PATH-ordered lookup. C:\\Windows\\System32\\bash.exe
+    (Microsoft's WSL launcher stub) sits in that search path ahead of PATH
+    entirely, so it wins even when Git Bash's bash.exe appears earlier in
+    PATH and would be what an interactive shell resolves. The result: this
+    silently launches *WSL's* bash instead of Git Bash. WSL mounts Windows
+    drives at /mnt/c/, not /c/, so every script path (mangled or not) then
+    fails with "No such file or directory" -- previously misdiagnosed as a
+    backslash-mangling issue alone (SETUP_GUIDE.md Known bug #4 /
+    UI_TESTING_LOG.md bug #12); that mangling is real too, but fixing only
+    the path and not the interpreter resolution still fails under WSL.
+    shutil.which() performs a real PATH-ordered lookup and finds Git Bash's
+    bash.exe correctly. Falls back to the bare "bash" (e.g. on Linux/macOS,
+    where this ambiguity doesn't exist) if the lookup finds nothing.
+    """
+    global _BASH_EXE
+    if _BASH_EXE is None:
+        _BASH_EXE = shutil.which("bash") or "bash"
+    return _BASH_EXE
+
 @app.route("/api/remediate", methods=["POST"])
 def api_remediate():
     """Trigger BGP remediation actions on the lab network.
@@ -13238,8 +13278,9 @@ def api_remediate():
 
     try:
         proc = subprocess.run(
-            ["bash", _SIM_SCRIPT, action],
+            [_resolve_bash_exe(), _to_bash_argv_path(_SIM_SCRIPT), action],
             capture_output=True, text=True, timeout=45,
+            encoding="utf-8", errors="replace",
         )
         # Filter known-benign vtysh warnings (no global vtysh.conf in containers — harmless)
         _NOISE = ("vtysh.conf", "No such file or directory")
@@ -15316,8 +15357,9 @@ def api_chaos_bgp():
         return jsonify({"action": action, "fabric": "dcn", "mode": "simulated", **r})
 
     try:
-        res = subprocess.run(["bash", _CHAOS_SCRIPT, action],
-                             capture_output=True, text=True, timeout=35)
+        res = subprocess.run([_resolve_bash_exe(), _to_bash_argv_path(_CHAOS_SCRIPT), action],
+                             capture_output=True, text=True, timeout=35,
+                             encoding="utf-8", errors="replace")
         out = (res.stdout + res.stderr).strip()
         _agent_emit("chaos", f"🐒 Chaos Monkey [{action}]", out[:180],
                     "warn" if action in ("break", "chaos") else "info")
