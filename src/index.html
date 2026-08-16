@@ -473,11 +473,11 @@ header h1{font-size:16px;font-weight:700;color:var(--accent);white-space:nowrap;
     <!-- ── Eval Harness ── -->
     <div class="tp" id="tab-eval">
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;flex-wrap:wrap">
-        <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Répétitions :</span>
+        <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Repeats:</span>
         <input id="eval-repeats" type="number" min="1" value="3" style="width:56px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 6px;font-size:12px"/>
-        <button class="btn p" id="eval-run-btn" onclick="evalRunCampaign()" style="font-weight:700">▶ Lancer</button>
+        <button class="btn p" id="eval-run-btn" onclick="evalRunCampaign()" style="font-weight:700">▶ Run</button>
         <button class="btn" onclick="clearEval()">✕ Clear</button>
-        <span style="color:var(--muted);font-size:11px">Compare plusieurs modèles (Claude + modèles locaux Ollama) sur les mêmes scénarios d'incident</span>
+        <span style="color:var(--muted);font-size:11px">Compare multiple models (Claude + local Ollama models) on the same incident scenarios</span>
       </div>
       <!-- Progress -->
       <div id="eval-progress" style="display:none;flex-shrink:0;margin-top:6px">
@@ -492,23 +492,23 @@ header h1{font-size:16px;font-weight:700;color:var(--accent);white-space:nowrap;
       <!-- Selection -->
       <div style="display:flex;gap:12px;flex-shrink:0;min-height:0;flex:0 0 auto">
         <div class="asec" style="flex:1;max-height:220px;overflow-y:auto">
-          <h4>📋 Scénarios <span style="float:right;cursor:pointer;color:var(--accent)" onclick="evalSelectAllScenarios(true)">tout</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="evalSelectAllScenarios(false)">aucun</span></h4>
-          <div id="eval-scenarios">Chargement…</div>
+          <h4>📋 Scenarios <span style="float:right;cursor:pointer;color:var(--accent)" onclick="evalSelectAllScenarios(true)">all</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="evalSelectAllScenarios(false)">none</span></h4>
+          <div id="eval-scenarios">Loading…</div>
         </div>
         <div class="asec" style="flex:1;max-height:220px;overflow-y:auto">
-          <h4>🤖 Modèles <span style="float:right;cursor:pointer;color:var(--accent)" onclick="evalSelectAllModels(true)">tout</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="evalSelectAllModels(false)">aucun</span></h4>
-          <div id="eval-models">Chargement…</div>
+          <h4>🤖 Models <span style="float:right;cursor:pointer;color:var(--accent)" onclick="evalSelectAllModels(true)">all</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="evalSelectAllModels(false)">none</span></h4>
+          <div id="eval-models">Loading…</div>
         </div>
       </div>
       <!-- Report -->
       <div id="eval-output" style="flex:1;overflow-y:auto;min-height:0;margin-top:8px">
         <div style="color:var(--muted);text-align:center;padding:60px;font-size:13px">
           <div style="font-size:32px;margin-bottom:12px">🧪</div>
-          <b style="color:var(--text)">Eval Harness — comparaison multi-modèle</b><br><br>
+          <b style="color:var(--text)">Eval Harness — multi-model comparison</b><br><br>
           <span style="font-size:11px">
-          Sélectionne des scénarios et des modèles ci-dessus puis clique <b style="color:var(--accent)">▶ Lancer</b>.<br>
-          Chaque combinaison (scénario × modèle × répétition) exécute un diagnostic réel et le fait noter par un juge LLM.<br><br>
-          <span style="color:var(--yellow)">Les modèles locaux (Ollama) peuvent être lents — le run peut prendre plusieurs minutes à plusieurs heures selon la sélection.</span>
+          Select scenarios and models above, then click <b style="color:var(--accent)">▶ Run</b>.<br>
+          Each combination (scenario × model × repeat) runs a real diagnosis and has it scored by an LLM judge.<br><br>
+          <span style="color:var(--yellow)">Local models (Ollama) can be slow — a run may take a few minutes to several hours depending on the selection.</span>
           </span>
         </div>
       </div>

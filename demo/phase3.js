@@ -277,7 +277,7 @@
     } catch (e) {
       _evalCmpLoaded = false;
       const wrap = document.getElementById('evalcmp-scenarios');
-      if (wrap) wrap.textContent = 'Erreur de chargement : ' + e.message;
+      if (wrap) wrap.textContent = 'Load error: ' + e.message;
     }
   }
 
@@ -303,7 +303,7 @@
   function _evalCmpRenderReport(result) {
     const reportEl = clear('evalcmp-report');
     const bar = el('div', { style: 'font-size:11px;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap' });
-    bar.appendChild(document.createTextNode('📄 JSONL : '));
+    bar.appendChild(document.createTextNode('📄 JSONL: '));
     bar.appendChild(el('code', { style: 'color:var(--accent)', text: result.jsonl_path }));
     bar.appendChild(document.createTextNode(' · ' + result.total_runs + ' runs'));
     reportEl.appendChild(bar);
@@ -338,11 +338,11 @@
     const scenarios = Array.from(document.querySelectorAll('.evalcmp-sc-cb:checked')).map(cb => cb.value);
     const models = Array.from(document.querySelectorAll('.evalcmp-mo-cb:checked')).map(cb => cb.value);
     const repeats = parseInt(document.getElementById('evalcmp-repeats').value, 10) || 3;
-    if (!scenarios.length) { _evalCmpShowError('Sélectionne au moins un scénario.'); return; }
-    if (!models.length) { _evalCmpShowError('Sélectionne au moins un modèle.'); return; }
+    if (!scenarios.length) { _evalCmpShowError('Select at least one scenario.'); return; }
+    if (!models.length) { _evalCmpShowError('Select at least one model.'); return; }
 
     clear('evalcmp-report');
-    _evalCmpShowProgress('Démarrage…', 0);
+    _evalCmpShowProgress('Starting…', 0);
     try {
       // Direct fetch (not the shared api() helper) so a 400 validation error
       // from the server (e.g. "Unknown scenario(s): ...") surfaces its exact

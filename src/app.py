@@ -15723,7 +15723,7 @@ def eval_run():
             )
             _eval_update_job(
                 job_id, status="done", progress=100,
-                message=f"Terminé — {len(results)} runs",
+                message=f"Done — {len(results)} runs",
                 result={"jsonl_path": path, "report_markdown": report_md, "total_runs": len(results)},
             )
         except Exception as e:

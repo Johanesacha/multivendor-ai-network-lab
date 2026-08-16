@@ -2965,12 +2965,12 @@ body.noc-wall .icon-rail{display:none}
          models — Claude + local Ollama — on the same scenario set) ── -->
     <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;flex-shrink:0">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <span style="font-size:13px;font-weight:700;color:#e5c07b">&#x1F52C; Comparaison multi-mod&#232;le</span>
-        <span style="font-size:11px;color:var(--muted)">Claude + mod&#232;les locaux Ollama sur les m&#234;mes sc&#233;narios</span>
+        <span style="font-size:13px;font-weight:700;color:#e5c07b">&#x1F52C; Multi-Model Comparison</span>
+        <span style="font-size:11px;color:var(--muted)">Claude + local Ollama models on the same scenarios</span>
         <div class="spacer"></div>
-        <span style="font-size:10px;color:var(--muted)">R&#233;p&#233;titions&#160;:</span>
+        <span style="font-size:10px;color:var(--muted)">Repeats:</span>
         <input id="evalcmp-repeats" type="number" min="1" value="3" style="width:56px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 6px;font-size:12px"/>
-        <button class="btn p" onclick="runEvalCampaign()">&#x25B6; Lancer campagne</button>
+        <button class="btn p" onclick="runEvalCampaign()">&#x25B6; Run Campaign</button>
       </div>
       <div id="evalcmp-progress" style="display:none;margin-top:6px;flex-shrink:0">
         <div style="display:flex;align-items:center;gap:8px">
@@ -2983,12 +2983,12 @@ body.noc-wall .icon-rail{display:none}
       </div>
       <div style="display:flex;gap:12px;margin-top:8px;flex-shrink:0">
         <div class="asec" style="flex:1;max-height:180px;overflow-y:auto">
-          <h4>Sc&#233;narios <span style="float:right;cursor:pointer;color:var(--accent)" onclick="evalCmpSelectAll('sc',true)">tout</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="evalCmpSelectAll('sc',false)">aucun</span></h4>
-          <div id="evalcmp-scenarios">Chargement&#8230;</div>
+          <h4>Scenarios <span style="float:right;cursor:pointer;color:var(--accent)" onclick="evalCmpSelectAll('sc',true)">all</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="evalCmpSelectAll('sc',false)">none</span></h4>
+          <div id="evalcmp-scenarios">Loading&#8230;</div>
         </div>
         <div class="asec" style="flex:1;max-height:180px;overflow-y:auto">
-          <h4>Mod&#232;les <span style="float:right;cursor:pointer;color:var(--accent)" onclick="evalCmpSelectAll('mo',true)">tout</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="evalCmpSelectAll('mo',false)">aucun</span></h4>
-          <div id="evalcmp-models">Chargement&#8230;</div>
+          <h4>Models <span style="float:right;cursor:pointer;color:var(--accent)" onclick="evalCmpSelectAll('mo',true)">all</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="evalCmpSelectAll('mo',false)">none</span></h4>
+          <div id="evalcmp-models">Loading&#8230;</div>
         </div>
       </div>
       <div id="evalcmp-report" style="margin-top:8px;flex-shrink:0"></div>
@@ -8555,7 +8555,7 @@ document.querySelectorAll('.tab[data-tab^="mv-"]').forEach(tab => {
     </div>
   </div>
 </div>
-<script src="phase3.js?v=r23" defer></script>
+<script src="phase3.js?v=r24" defer></script>
 <!-- Phase 1: nav-rail wiring. Runs after phase3.js so we wrap the final composed switchTab. -->
 <script>
 (function(){

@@ -5921,7 +5921,7 @@ async function initEvalTab() {
     _evalRenderCheckboxes();
   } catch (e) {
     document.getElementById("eval-scenarios").innerHTML =
-      `<span style="color:var(--red)">Erreur de chargement : ${e.message}</span>`;
+      `<span style="color:var(--red)">Load error: ${e.message}</span>`;
   }
 }
 
@@ -5949,11 +5949,11 @@ async function evalRunCampaign() {
   const scenarios = [...document.querySelectorAll(".eval-sc-cb:checked")].map(cb => cb.value);
   const models = [...document.querySelectorAll(".eval-mo-cb:checked")].map(cb => cb.value);
   const repeats = parseInt(document.getElementById("eval-repeats").value, 10) || 3;
-  if (!scenarios.length) { _evalShowError("Sélectionne au moins un scénario."); return; }
-  if (!models.length) { _evalShowError("Sélectionne au moins un modèle."); return; }
+  if (!scenarios.length) { _evalShowError("Select at least one scenario."); return; }
+  if (!models.length) { _evalShowError("Select at least one model."); return; }
 
   document.getElementById("eval-run-btn").disabled = true;
-  _evalShowProgress("Démarrage…", 0);
+  _evalShowProgress("Starting…", 0);
   try {
     const r = await fetch(`${API}/eval/run`, {
       method: "POST", headers: {"Content-Type": "application/json"},
@@ -6013,10 +6013,10 @@ function _evalRenderReport(result) {
   _evalLastReport = result.report_markdown;
   document.getElementById("eval-output").innerHTML = `
     <div style="font-size:11px;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      <span>📄 JSONL : <code style="color:var(--accent)">${_evalEsc(result.jsonl_path)}</code> · ${result.total_runs} runs</span>
+      <span>📄 JSONL: <code style="color:var(--accent)">${_evalEsc(result.jsonl_path)}</code> · ${result.total_runs} runs</span>
       <div class="spacer"></div>
-      <button class="btn" onclick="evalCopyReport()">📋 Copier</button>
-      <button class="btn" onclick="evalDownloadReport()">💾 Télécharger .md</button>
+      <button class="btn" onclick="evalCopyReport()">📋 Copy</button>
+      <button class="btn" onclick="evalDownloadReport()">💾 Download .md</button>
     </div>
     <pre class="out-pre" style="max-height:none">${_evalEsc(result.report_markdown)}</pre>
   `;
@@ -6036,5 +6036,5 @@ function evalDownloadReport() {
 function clearEval() {
   _evalLastReport = null;
   document.getElementById("eval-output").innerHTML =
-    '<div style="color:var(--muted);text-align:center;padding:60px;font-size:13px">Sélectionne des scénarios et des modèles puis clique sur ▶ Lancer.</div>';
+    '<div style="color:var(--muted);text-align:center;padding:60px;font-size:13px">Select scenarios and models, then click ▶ Run.</div>';
 }
