@@ -48,7 +48,7 @@ pour ton mémoire).
 console du navigateur (touche `F12`) et tape une fois (la clé est dans
 `src/.env`, ligne `MVLAB_API_KEY=`) :
 ```js
-localStorage.setItem("mvlab_api_key", "TA_CLE_ICI")
+localStorage.setItem("MVLAB_API_KEY", "TA_CLE_ICI")
 ```
 
 ## À savoir
