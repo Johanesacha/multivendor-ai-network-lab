@@ -14,3 +14,10 @@ python-dotenv==1.2.2
 # if it's missing the orchestrator silently degrades to offline rule-based diagnosis.
 anthropic==0.105.2
 cryptography>=49.0.0
+# auto_remediate.py loads YAML rule files; without this the whole Auto-Remediate
+# feature (6 endpoints + background loop) silently disappears at import time.
+pyyaml>=6.0
+# Powers the EOS getters behind /api/napalm/* (version-audit, bgp-status, env-health,
+# interface-errors, ...). Junos NAPALM-style collection is hand-rolled over paramiko
+# and works without this package -- only EOS device collection needs it.
+napalm>=5.0.0
