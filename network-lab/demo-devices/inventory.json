@@ -18,7 +18,7 @@
       "model": "SRX345",
       "role": "firewall",
       "site": "DE-FRA",
-      "config": "junos/de-fra-fw-01.txt",
+      "config": "junos/fra-fw-01.txt",
       "live": false,
       "os": "junos"
     },
@@ -30,7 +30,7 @@
       "model": "SRX345",
       "role": "firewall",
       "site": "UK-LON",
-      "config": "junos/uk-lon-fw-01.txt",
+      "config": "junos/lon-fw-01.txt",
       "live": false,
       "os": "junos"
     },
@@ -42,7 +42,7 @@
       "model": "SRX345",
       "role": "firewall",
       "site": "NL-AMS",
-      "config": "junos/nl-ams-fw-01.txt",
+      "config": "junos/ams-fw-01.txt",
       "live": false,
       "os": "junos"
     },
@@ -54,7 +54,7 @@
       "model": "SRX345",
       "role": "firewall",
       "site": "US-NYC",
-      "config": "junos/us-nyc-fw-01.txt",
+      "config": "junos/nyc-fw-01.txt",
       "live": false,
       "os": "junos"
     },
@@ -66,7 +66,7 @@
       "model": "MX204",
       "role": "core",
       "site": "DE-FRA",
-      "config": "junos/de-fra-mx-01.txt",
+      "config": "junos/fra-mx-01.txt",
       "live": false,
       "os": "junos"
     },
@@ -78,7 +78,7 @@
       "model": "MX960",
       "role": "core",
       "site": "EU-CDG",
-      "config": "junos/eu-cdg-mx-01.txt",
+      "config": "junos/cdg-mx-01.txt",
       "live": false,
       "os": "junos"
     },
@@ -90,7 +90,7 @@
       "model": "EX4600",
       "role": "dist",
       "site": "DE-FRA",
-      "config": "junos/de-fra-ex-01.txt",
+      "config": "junos/fra-ex-01.txt",
       "live": false,
       "os": "junos"
     },
@@ -102,7 +102,7 @@
       "model": "EX4600",
       "role": "access",
       "site": "DE-FRA",
-      "config": "junos/de-fra-ex-02.txt",
+      "config": "junos/fra-ex-02.txt",
       "live": false,
       "os": "junos"
     },
@@ -114,7 +114,7 @@
       "model": "EX4600",
       "role": "dist",
       "site": "UK-LON",
-      "config": "junos/uk-lon-ex-01.txt",
+      "config": "junos/lon-ex-01.txt",
       "live": false,
       "os": "junos"
     },
@@ -126,7 +126,7 @@
       "model": "EX4600",
       "role": "dist",
       "site": "NL-AMS",
-      "config": "junos/nl-ams-ex-01.txt",
+      "config": "junos/ams-ex-01.txt",
       "live": false,
       "os": "junos"
     },
@@ -138,7 +138,7 @@
       "model": "DCS-7280CR3K",
       "role": "edge",
       "site": "NL-AMS",
-      "config": "eos/nl-ams-eos-rt-01.txt",
+      "config": "eos/ams-eos-rt-01.txt",
       "live": false,
       "os": "eos"
     },
@@ -150,7 +150,7 @@
       "model": "DCS-7280CR3K",
       "role": "edge",
       "site": "DE-FRA",
-      "config": "eos/de-fra-eos-rt-01.txt",
+      "config": "eos/fra-eos-rt-01.txt",
       "live": false,
       "os": "eos"
     },
@@ -162,7 +162,7 @@
       "model": "DCS-7280CR3K",
       "role": "edge",
       "site": "EU-CDG",
-      "config": "eos/eu-cdg-eos-rt-01.txt",
+      "config": "eos/cdg-eos-rt-01.txt",
       "live": false,
       "os": "eos"
     },
@@ -174,7 +174,7 @@
       "model": "DCS-7050CX3",
       "role": "leaf",
       "site": "NL-AMS",
-      "config": "eos/nl-ams-eos-sw-01.txt",
+      "config": "eos/ams-eos-sw-01.txt",
       "live": false,
       "os": "eos"
     },
@@ -186,7 +186,7 @@
       "model": "DCS-7050CX3",
       "role": "leaf",
       "site": "DE-FRA",
-      "config": "eos/de-fra-eos-sw-01.txt",
+      "config": "eos/fra-eos-sw-01.txt",
       "live": false,
       "os": "eos"
     },
@@ -198,7 +198,7 @@
       "model": "DCS-7280CR3K",
       "role": "edge",
       "site": "US-NYC",
-      "config": "eos/us-nyc-eos-rt-01.txt",
+      "config": "eos/nyc-eos-rt-01.txt",
       "live": false,
       "os": "eos"
     },

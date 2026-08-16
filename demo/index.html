@@ -7951,26 +7951,29 @@ async function runFleetAudit() {
 
   let data = null;
   const r = await apiFetch('/api/mv/batfish/fleet', {method:'POST', body:JSON.stringify({}), timeout:20000});
-  if (r.ok && r.data && r.data.devices) {
+  if (r.ok && r.data && r.data.results) {
     data = r.data;
   } else {
     data = FLEET_DEMO;
     st.textContent = 'Demo data — start Flask for live analysis';
   }
 
-  const s = data.summary || {};
-  document.getElementById('fc-errors').textContent = s.total_errors ?? '—';
-  document.getElementById('fc-warnings').textContent = s.total_warnings ?? '—';
-  document.getElementById('fc-passed').textContent = s.total_passed ?? '—';
-  document.getElementById('fc-score').textContent = s.avg_score ? Math.round(s.avg_score) : '—';
+  const devices = data.results || data.devices || [];
+  document.getElementById('fc-errors').textContent = data.total_errors ?? (data.summary||{}).total_errors ?? '—';
+  document.getElementById('fc-warnings').textContent = data.total_warnings ?? (data.summary||{}).total_warnings ?? '—';
+  document.getElementById('fc-passed').textContent = data.total_passes ?? (data.summary||{}).total_passed ?? '—';
+  const avgScore = data.fleet_score ?? (data.summary||{}).avg_score;
+  document.getElementById('fc-score').textContent = avgScore ? Math.round(avgScore) : '—';
 
   const vendorColor = {juniper:'#84b935',arista:'#00adef',frr:'#ff9500'};
-  out.innerHTML = data.devices.map(d => {
+  out.innerHTML = devices.map(d => {
     const vc = vendorColor[d.vendor]||'var(--muted)';
     const scoreColor = d.score>=80?'var(--green)':d.score>=60?'var(--yellow)':'var(--red)';
-    const issues = (d.issues||[]).map(iss => {
-      const cls = iss.severity==='error'?'err':iss.severity==='warning'?'warn':'ok';
-      return `<div class="bf-issue ${cls}"><span class="tag-${cls==='err'?'crit':cls==='warn'?'warn':'ok'}">${iss.severity.toUpperCase()}</span><span style="flex:1;margin-left:6px">${esc(iss.message)}<br><span style="font-size:10px;color:var(--muted)">${esc(iss.rule||'')}</span></span></div>`;
+    const passedCount = d.passes ?? d.passed;
+    const rawIssues = d.findings || d.issues || [];
+    const issues = rawIssues.filter(iss => iss.severity !== 'pass').map(iss => {
+      const cls = iss.severity==='error'?'err':(iss.severity==='warn'||iss.severity==='warning')?'warn':'ok';
+      return `<div class="bf-issue ${cls}"><span class="tag-${cls==='err'?'crit':cls==='warn'?'warn':'ok'}">${iss.severity.toUpperCase()}</span><span style="flex:1;margin-left:6px">${esc(iss.message)}<br><span style="font-size:10px;color:var(--muted)">${esc(iss.category||iss.rule||'')}</span></span></div>`;
     }).join('');
     return `<div class="rcard">
       <div class="rcard-hdr">
@@ -7980,7 +7983,7 @@ async function runFleetAudit() {
         <span style="color:${scoreColor};font-weight:700;width:40px;text-align:right">${d.score}/100</span>
         <span class="tag-crit" style="margin-left:6px">${d.errors} ERR</span>
         <span class="tag-warn" style="margin-left:4px">${d.warnings} WARN</span>
-        <span class="tag-ok" style="margin-left:4px">${d.passed} OK</span>
+        <span class="tag-ok" style="margin-left:4px">${passedCount} OK</span>
       </div>
       <div class="rcard-body">${issues||'<span style="color:var(--green)">✓ No issues found</span>'}</div>
     </div>`;
