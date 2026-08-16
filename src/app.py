@@ -15767,10 +15767,14 @@ def eval_run():
             report_md = eval_harness.generate_report_markdown(
                 results, title="Rapport d'évaluation multi-modèle"
             )
+            model_comparison = eval_harness.model_comparison_stats(results)
             _eval_update_job(
                 job_id, status="done", progress=100,
                 message=f"Done — {len(results)} runs",
-                result={"jsonl_path": path, "report_markdown": report_md, "total_runs": len(results)},
+                result={
+                    "jsonl_path": path, "report_markdown": report_md, "total_runs": len(results),
+                    "model_comparison": model_comparison,
+                },
             )
         except Exception as e:
             _eval_update_job(job_id, status="error", message=str(e))

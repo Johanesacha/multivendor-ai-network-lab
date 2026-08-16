@@ -632,6 +632,31 @@ def generate_report_markdown(
     return "\n".join(lines) + "\n"
 
 
+def model_comparison_stats(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per-model summary stats as structured JSON — the same numbers as the
+    'Résumé par modèle' table in generate_report_markdown(), computed from the
+    same aggregate_results()/pricing helpers, so the two never drift apart.
+    Exists so a UI can render a colored/graphical comparison (score tiles,
+    bar chart) without parsing the markdown table back out of the report.
+    """
+    model_ids = sorted({r.get("agent_model_id", "?") for r in results})
+    out = []
+    for model_id in model_ids:
+        model_rows = [r for r in results if r.get("agent_model_id") == model_id]
+        agg = aggregate_results(model_rows)
+        out.append({
+            "model_id": model_id,
+            "provider": llm_client.MODEL_REGISTRY.get(model_id, {}).get("provider", "?"),
+            "total_runs": agg["total_runs"],
+            "included_runs": agg["included_runs"],
+            "keyword_score": agg["mean_keyword_score"],
+            "llm_score": agg["mean_llm_score"],
+            "avg_latency_s": _model_avg_latency_s(model_rows),
+            "total_cost_usd": _model_total_cost_usd(model_rows, model_id),
+        })
+    return out
+
+
 def _invoke_agent_with_usage(
     agent: str, symptom: str, agent_model_id: str = "claude-haiku-4-5"
 ) -> tuple[str, dict[str, int], str, str | None]:

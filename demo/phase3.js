@@ -300,16 +300,93 @@
     const reportEl = clear('evalcmp-report');
     reportEl.appendChild(el('div', { style: 'color:var(--red);padding:10px' }, '✗ ' + msg));
   }
+  // Score color scale: >=7 green (good), 4-6.9 yellow (mixed), <4 red (poor).
+  function _evalCmpScoreColor(score) {
+    if (score == null) return 'var(--muted)';
+    if (score >= 7) return 'var(--green)';
+    if (score >= 4) return 'var(--yellow)';
+    return 'var(--red)';
+  }
+
   function _evalCmpRenderReport(result) {
     const reportEl = clear('evalcmp-report');
-    const bar = el('div', { style: 'font-size:11px;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap' });
+    const bar = el('div', { style: 'font-size:11px;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap' });
     bar.appendChild(document.createTextNode('📄 JSONL: '));
     bar.appendChild(el('code', { style: 'color:var(--accent)', text: result.jsonl_path }));
     bar.appendChild(document.createTextNode(' · ' + result.total_runs + ' runs'));
     reportEl.appendChild(bar);
-    // textContent, never innerHTML: the report embeds LLM-generated agent
-    // output, so it's rendered as plain text like every other model/API
-    // string on this page (see the file banner comment at the top).
+
+    // ── Visual comparison: colored score cards + a styled table with a
+    // mini bar per model, built from result.model_comparison (structured
+    // JSON from eval_harness.model_comparison_stats() — same numbers as the
+    // markdown table below, just not requiring the reader to parse text). ──
+    const stats = result.model_comparison || [];
+    if (stats.length) {
+      const cardRow = el('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px' });
+      stats.forEach(s => {
+        const score = s.llm_score != null ? s.llm_score : s.keyword_score;
+        const color = _evalCmpScoreColor(score);
+        const card = el('div', { style: `background:var(--bg2);border:1px solid ${color}55;border-left:3px solid ${color};border-radius:6px;padding:8px 10px` });
+        card.appendChild(el('div', { style: 'font-size:11px;font-weight:700;color:var(--text)', text: s.model_id }));
+        card.appendChild(el('div', { style: 'font-size:9px;color:var(--muted);text-transform:uppercase', text: s.provider }));
+        card.appendChild(el('div', { style: `font-size:24px;font-weight:800;color:${color};margin-top:4px`, text: score != null ? score.toFixed(1) : '—' }));
+        card.appendChild(el('div', { style: 'font-size:9px;color:var(--muted)', text: s.llm_score != null ? 'score juge /10' : 'score mots-clés /10' }));
+        const meta = el('div', { style: 'font-size:10px;color:var(--muted);margin-top:6px;display:flex;justify-content:space-between;gap:6px' });
+        meta.appendChild(el('span', { text: s.avg_latency_s != null ? s.avg_latency_s + 's' : '—' }));
+        meta.appendChild(el('span', { text: '$' + s.total_cost_usd.toFixed(5) }));
+        card.appendChild(meta);
+        card.appendChild(el('div', { style: 'font-size:9px;color:var(--muted);margin-top:2px', text: s.included_runs + '/' + s.total_runs + ' live' }));
+        cardRow.appendChild(card);
+      });
+      reportEl.appendChild(cardRow);
+
+      const table = el('div', { style: 'background:var(--bg2);border:1px solid var(--border);border-radius:6px;overflow:hidden;margin-bottom:10px;font-size:11px' });
+      const head = el('div', { style: 'display:grid;grid-template-columns:1fr 75px 75px 65px 80px 1.3fr;background:var(--bg3)' });
+      ['Modèle', 'Mots-clés /10', 'Juge /10', 'Latence', 'Coût', 'Comparaison (score juge)'].forEach(h =>
+        head.appendChild(el('div', { style: 'padding:5px 8px;font-size:9px;text-transform:uppercase;color:var(--muted)', text: h }))
+      );
+      table.appendChild(head);
+      stats.forEach(s => {
+        const jScore = s.llm_score;
+        const jColor = _evalCmpScoreColor(jScore);
+        const row = el('div', { style: 'display:grid;grid-template-columns:1fr 75px 75px 65px 80px 1.3fr;border-top:1px solid var(--border);align-items:center' });
+        row.appendChild(el('div', { style: 'padding:5px 8px;font-family:Consolas,monospace', text: s.model_id }));
+        row.appendChild(el('div', { style: 'padding:5px 8px', text: s.keyword_score != null ? s.keyword_score : '—' }));
+        row.appendChild(el('div', { style: `padding:5px 8px;font-weight:700;color:${jColor}`, text: jScore != null ? jScore : '—' }));
+        row.appendChild(el('div', { style: 'padding:5px 8px;color:var(--muted)', text: s.avg_latency_s != null ? s.avg_latency_s + 's' : '—' }));
+        row.appendChild(el('div', { style: 'padding:5px 8px;color:var(--muted)', text: '$' + s.total_cost_usd.toFixed(5) }));
+        const barWrap = el('div', { style: 'padding:5px 8px' });
+        const track = el('div', { style: 'background:var(--bg3);border-radius:3px;height:8px;overflow:hidden' });
+        const pct = jScore != null ? Math.max(0, Math.min(100, jScore / 10 * 100)) : 0;
+        track.appendChild(el('div', { style: `height:100%;width:${pct}%;background:${jColor}` }));
+        barWrap.appendChild(track);
+        row.appendChild(barWrap);
+        table.appendChild(row);
+      });
+      reportEl.appendChild(table);
+    }
+
+    // ── Full markdown report stays available (copy / download), unchanged
+    // in content — the visual elements above summarize it, they don't
+    // replace it. textContent, never innerHTML: the report embeds
+    // LLM-generated agent output (see file banner comment at the top). ──
+    const mdBar = el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:4px' });
+    mdBar.appendChild(el('span', { style: 'font-size:11px;color:var(--muted);font-weight:700', text: '📝 Rapport Markdown complet' }));
+    const copyBtn = el('button', { cls: 'btn', style: 'font-size:10px', text: '📋 Copier' });
+    copyBtn.addEventListener('click', () => navigator.clipboard.writeText(result.report_markdown || ''));
+    const dlBtn = el('button', { cls: 'btn', style: 'font-size:10px', text: '💾 Télécharger .md' });
+    dlBtn.addEventListener('click', () => {
+      const blob = new Blob([result.report_markdown || ''], { type: 'text/markdown' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'rapport_evaluation.md';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+    mdBar.appendChild(copyBtn);
+    mdBar.appendChild(dlBtn);
+    reportEl.appendChild(mdBar);
+
     const pre = el('pre', { style: 'white-space:pre-wrap;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:10px;font-size:11.5px;color:var(--text);max-height:420px;overflow-y:auto' });
     pre.textContent = result.report_markdown;
     reportEl.appendChild(pre);
