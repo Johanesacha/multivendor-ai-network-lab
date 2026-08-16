@@ -3905,7 +3905,7 @@ function mockDeepAnalysis(){
   p.textContent='';
   const sec = document.createElement('div');
   sec.className='asec';
-  sec.innerHTML='<h4>Deep Analysis de-fra-core-01</h4>';
+  sec.innerHTML='<h4>Deep Analysis de-fra-core-01 <span style="font-size:10px;font-weight:400;color:var(--muted)">⚪ DEMO — fixed example output, not a live query of the selected device</span></h4>';
   const grid = document.createElement('div');
   grid.style.cssText='display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px';
   [['74','Health','var(--yellow)'],['B','Grade','var(--yellow)'],['2','Critical','var(--red)'],['5','Warnings','var(--yellow)']].forEach(([v,l,c])=>{
@@ -3924,7 +3924,7 @@ function mockDeepAnalysis(){
     d.textContent=i.txt; sec.appendChild(d);
   });
   const ai=document.createElement('div'); ai.className='ai-bubble';
-  const h=document.createElement('div'); h.className='ai-head'; h.textContent='Qwen3 LLM Narrative';
+  const h=document.createElement('div'); h.className='ai-head'; h.textContent='Demo Narrative (synthetic — not a live LLM call)';
   const t=document.createElement('div'); t.textContent='The device shows moderate health (74/100). Primary concern is eth1 down for 23h — physical uplink loss, likely fiber or SFP. Escalate to DC ops at DE-FRA. BGP peer 10.200.0.12 flapping 12 times — review hold-timer and MTU settings on both ends.';
   ai.appendChild(h); ai.appendChild(t);
   sec.appendChild(ai); p.appendChild(sec);
@@ -3934,7 +3934,7 @@ function mockLogAnalysis(){
   const p = document.getElementById('ana-panel');
   p.textContent='';
   const sec=document.createElement('div'); sec.className='asec';
-  const h4=document.createElement('h4'); h4.textContent='Log Intelligence — Kibana cross-correlation'; sec.appendChild(h4);
+  const h4=document.createElement('h4'); h4.innerHTML='Log Intelligence — Kibana cross-correlation <span style="font-size:10px;font-weight:400;color:var(--muted)">⚪ DEMO — no Kibana deployed in this lab, fixed example output</span>'; sec.appendChild(h4);
   [
     {s:'crit',t:'ROUTING',m:'BGP peer 10.10.4.1 CONNECT_FAILED x12 — hold timer expiry pattern'},
     {s:'warn',t:'INTERFACE',m:'xe-0/0/1 link-down events x3 — physical layer issue'},
@@ -3954,7 +3954,7 @@ function mockLogAnalysis(){
 function mockDriftCheck(){
   const p=document.getElementById('ana-panel'); p.textContent='';
   const sec=document.createElement('div'); sec.className='asec';
-  const h4=document.createElement('h4'); h4.textContent='Config Drift — 18 compliance checks'; sec.appendChild(h4);
+  const h4=document.createElement('h4'); h4.innerHTML='Config Drift — 18 compliance checks <span style="font-size:10px;font-weight:400;color:var(--muted)">⚪ DEMO — fixed example output, not a live query of the selected device</span>'; sec.appendChild(h4);
   [['NTP servers configured',true],['SNMP v3 auth enabled',true],['BGP MD5 auth on all peers',false],
    ['SSH max-sessions <= 5',true],['Rescue config saved',false],['Log level set to info',true]].forEach(([c,ok])=>{
     const row=document.createElement('div');
@@ -3968,7 +3968,7 @@ function mockDriftCheck(){
 function mockSecAudit(){
   const p=document.getElementById('ana-panel'); p.textContent='';
   const sec=document.createElement('div'); sec.className='asec';
-  const h4=document.createElement('h4'); h4.textContent='Security Audit'; sec.appendChild(h4);
+  const h4=document.createElement('h4'); h4.innerHTML='Security Audit <span style="font-size:10px;font-weight:400;color:var(--muted)">⚪ DEMO — fixed example output, not a live query of the selected device</span>'; sec.appendChild(h4);
   [
     {cls:'err',txt:'CVE-2024-21591 (Junos SRX) CVSS 9.8 — J-Web RCE. Mitigation: Disable J-Web or upgrade to 23.4R1'},
     {cls:'warn',txt:'SNMP community public still configured on 3 interfaces'},
