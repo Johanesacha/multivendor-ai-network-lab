@@ -21,7 +21,7 @@ import logging
 import os
 import re
 import time
-from typing import Any
+from typing import Any, Callable
 
 import gait_audit
 import llm_client
@@ -354,6 +354,7 @@ def run_campaign(
     agent: str = "ai_command",
     judge_model_id: str = "claude-haiku-4-5",
     output_path: str | None = None,
+    on_progress: Callable[[int, int, dict[str, Any]], None] | None = None,
 ) -> str:
     """
     Run every (scenario, model, repeat) combination, appending each raw
@@ -369,6 +370,11 @@ def run_campaign(
     path to the JSONL file written (auto-generated under
     campaign_results/ if output_path is omitted) for chapter-4-style
     offline analysis (pandas.read_json(path, lines=True), jq, etc.).
+
+    on_progress, if given, is called after every individual run as
+    on_progress(done, total, result) — this is the single hook both the
+    CLI script and the web UI job runner use to report progress, so
+    neither has to duplicate this loop to observe it.
     """
     if output_path is None:
         os.makedirs(_CAMPAIGN_RESULTS_DIR, exist_ok=True)
@@ -399,6 +405,8 @@ def run_campaign(
                         "run_campaign: %d/%d done (scenario=%s model=%s rep=%d)",
                         done, total, scenario_id, model_id, rep,
                     )
+                    if on_progress is not None:
+                        on_progress(done, total, result)
     return output_path
 
 
@@ -481,6 +489,143 @@ def aggregate_results(results: list[dict[str, Any]]) -> dict[str, Any]:
         "mean_llm_score": _mean(llm_scores),
         "judge_model": JUDGE_MODEL,
     }
+
+
+def _model_total_cost_usd(model_rows: list[dict[str, Any]], model_id: str) -> float:
+    """Sum model_cost tokens across model_rows into a dollar figure, using
+    llm_client.MODEL_REGISTRY as the single source of pricing truth (never
+    re-hardcode per-model prices here — they'd drift from the registry)."""
+    entry = llm_client.MODEL_REGISTRY.get(model_id, {})
+    price_in = entry.get("price_in_per_mtok", 0.0)
+    price_out = entry.get("price_out_per_mtok", 0.0)
+    total = 0.0
+    for r in model_rows:
+        mc = r.get("model_cost") or {}
+        total += (mc.get("input", 0) / 1_000_000) * price_in
+        total += (mc.get("output", 0) / 1_000_000) * price_out
+    return round(total, 6)
+
+
+def _model_avg_latency_s(model_rows: list[dict[str, Any]]) -> float | None:
+    if not model_rows:
+        return None
+    return round(sum(r.get("total_ms", 0) for r in model_rows) / len(model_rows) / 1000, 1)
+
+
+def _report_conclusion_fr(model_stats: dict[str, dict[str, Any]], results: list[dict[str, Any]]) -> str:
+    """Deterministic, French, 2-3 sentence conclusion from per-model stats.
+    No LLM call — the report must stay fast, free, and reproducible."""
+    scored = {m: s["judge_score"] for m, s in model_stats.items() if s["judge_score"] is not None}
+    if not scored:
+        return "Aucun score de juge exploitable sur ces runs — impossible de comparer les modèles sur cette base."
+
+    best_model = max(scored, key=lambda m: scored[m])
+    sentences = [
+        f"Sur les scénarios évalués, **{best_model}** obtient le meilleur score du juge "
+        f"({scored[best_model]:.2f}/10)."
+    ]
+    if len(scored) > 1:
+        worst_model = min(scored, key=lambda m: scored[m])
+        if worst_model != best_model:
+            sentences[-1] = sentences[-1][:-1] + f", contre {scored[worst_model]:.2f}/10 pour {worst_model}."
+
+    latencies = {m: s["avg_latency_s"] for m, s in model_stats.items() if s["avg_latency_s"] is not None}
+    if len(latencies) > 1:
+        fastest = min(latencies, key=lambda m: latencies[m])
+        if fastest != best_model and fastest in scored:
+            sentences.append(
+                f"{fastest} est nettement plus rapide en moyenne ({latencies[fastest]}s par run) "
+                f"mais avec un score juge plus bas ({scored[fastest]:.2f}/10)."
+            )
+
+    total_excluded = sum(1 for r in results if r.get("agent_path") == "stub")
+    if total_excluded:
+        sentences.append(
+            f"{total_excluded} run(s) ont été exclus des moyennes (modèle injoignable ou délai dépassé) — "
+            "voir le détail des exclusions ci-dessus avant d'interpréter ces chiffres comme définitifs."
+        )
+    return " ".join(sentences)
+
+
+def generate_report_markdown(
+    results: list[dict[str, Any]], title: str = "Rapport d'évaluation multi-modèle"
+) -> str:
+    """
+    Build a human-readable Markdown summary from a list of run_scenario()
+    results (typically all lines of one run_campaign() JSONL file).
+
+    This is the single report generator shared by run_evaluation_cli.py and
+    the web UI's /api/eval/run job — both call this function directly rather
+    than reimplementing report formatting, so the two launch paths always
+    produce an identical report shape from identical underlying data
+    (run_campaign + aggregate_results).
+
+    Sections: a per-model table (scores, latency, cost), a breakdown of
+    excluded runs and why, and a short deterministic conclusion.
+    """
+    if not results:
+        return f"# {title}\n\nAucun run à rapporter.\n"
+
+    model_ids = sorted({r.get("agent_model_id", "?") for r in results})
+    lines = [
+        f"# {title}",
+        "",
+        f"**Date :** {time.strftime('%Y-%m-%d %H:%M:%S')}  ",
+        f"**Runs totaux :** {len(results)}  ",
+        f"**Modèles comparés :** {', '.join(model_ids)}",
+        "",
+        "## Résumé par modèle",
+        "",
+        "| Modèle | Runs | Réussis (live) | Score mots-clés /10 | Score juge /10 | Latence moy. | Coût total |",
+        "|---|---|---|---|---|---|---|",
+    ]
+
+    model_stats: dict[str, dict[str, Any]] = {}
+    for model_id in model_ids:
+        model_rows = [r for r in results if r.get("agent_model_id") == model_id]
+        agg = aggregate_results(model_rows)
+        avg_latency_s = _model_avg_latency_s(model_rows)
+        total_cost = _model_total_cost_usd(model_rows, model_id)
+        model_stats[model_id] = {
+            "judge_score": agg["mean_llm_score"],
+            "keyword_score": agg["mean_keyword_score"],
+            "avg_latency_s": avg_latency_s,
+            "total_cost_usd": total_cost,
+        }
+        kw = agg["mean_keyword_score"]
+        js = agg["mean_llm_score"]
+        lines.append(
+            f"| {model_id} | {agg['total_runs']} | {agg['included_runs']}/{agg['total_runs']} | "
+            f"{kw if kw is not None else '—'} | {js if js is not None else '—'} | "
+            f"{avg_latency_s if avg_latency_s is not None else '—'}s | "
+            f"${total_cost:.5f} |"
+        )
+
+    global_agg = aggregate_results(results)
+    lines += [
+        "",
+        "## Runs exclus",
+        "",
+        f"- **{global_agg['excluded_stub_runs']}** run(s) exclu(s) — modèle injoignable ou délai "
+        "dépassé (réponse de secours utilisée à la place)",
+        f"- **{global_agg['excluded_judge_error_runs']}** run(s) exclu(s) — le juge (LLM évaluateur) "
+        "a échoué (délai, erreur réseau, réponse tronquée)",
+        f"- **{global_agg['excluded_non_numeric_judge_score_runs']}** score(s) de juge exclu(s) du "
+        "calcul de moyenne (valeur non numérique renvoyée par le juge)",
+    ]
+
+    stub_rows = [r for r in results if r.get("agent_path") == "stub"]
+    if stub_rows:
+        by_model_scenario: dict[tuple[str, str], int] = {}
+        for r in stub_rows:
+            key = (r.get("agent_model_id", "?"), r.get("scenario_id", "?"))
+            by_model_scenario[key] = by_model_scenario.get(key, 0) + 1
+        lines += ["", "### Détail des exclusions (stub)", ""]
+        for (m, s), n in sorted(by_model_scenario.items()):
+            lines.append(f"- {m} / {s} : {n} run(s)")
+
+    lines += ["", "## Conclusion", "", _report_conclusion_fr(model_stats, results)]
+    return "\n".join(lines) + "\n"
 
 
 def _invoke_agent_with_usage(
