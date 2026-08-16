@@ -3980,25 +3980,98 @@ function mockSecAudit(){
   p.appendChild(sec);
 }
 
+const NAPALM_DEMO = {
+  version: {title:'Version Audit DE-FRA (4 devices)',
+    body:'de-fra-core-01  FRRouting 9.1.0  OK Current\nde-fra-core-02  FRRouting 9.1.0  OK Current\nde-fra-edge-01  FRRouting 8.5.3  WARN BEHIND\nde-fra-dist-01  FRRouting 9.0.2  OK Current\n\nSummary: 3/4 current  1/4 needs upgrade', cls:'tag-warn', tag:'WARN'},
+  bgp: {title:'BGP Status DE-FRA',
+    body:'de-fra-core-01  Peers: 3/3  All Established\nde-fra-core-02  Peers: 2/2  All Established\nde-fra-edge-01  Peers: 2/3  1 DOWN (10.200.0.15 AS65005)\n\nFlapping: 10.200.0.15 (8 flaps/24h)\nTotal prefixes: 4,218', cls:'tag-warn', tag:'WARN'},
+  env: {title:'Env Health DE-FRA',
+    body:'de-fra-core-01  CPU:11%  MEM:29%  Temp:38C  Fans:OK  PSU:1/1\nde-fra-core-02  CPU:9%   MEM:27%  Temp:37C  Fans:OK  PSU:1/1\nde-fra-edge-01  CPU:6%   MEM:22%  Temp:35C  Fans:OK  PSU:1/1', cls:'tag-ok', tag:'OK'},
+  errors: {title:'Interface Errors DE-FRA',
+    body:'de-fra-core-01  eth1  CRC:312   Discards:0    Input errors:312\nde-fra-core-02  eth0  CRC:8     Discards:2    Input errors:10\nde-fra-edge-01  eth2  CRC:0     Discards:289  Output drops:289\n\nAction: eth1 on de-fra-core-01 has high CRC — check SFP/fiber', cls:'tag-warn', tag:'WARN'},
+};
+
+/* NAPALM job-poll helper: POST /api/napalm/<endpoint> -> {job_id}, then poll
+   /api/napalm/jobs/<id> until status leaves "running". Renders real per-device
+   results when LIVE; falls back to the canned NAPALM_DEMO text otherwise or on
+   any transport failure/timeout. */
+async function _napalmRunJob(endpoint, siteVal, renderResult, demoKey){
+  const out = document.getElementById('napalm-out');
+  const site = (siteVal||'').toLowerCase();
+  if(!LIVE){
+    const d = NAPALM_DEMO[demoKey];
+    out.textContent=''; out.appendChild(rcard(d.title, d.body, d.cls, d.tag));
+    return;
+  }
+  loading('napalm-out', 'Collecting from '+siteVal+'…');
+  const start = await apiFetch('/api/napalm/'+endpoint, {method:'POST', body:JSON.stringify({site}), timeout:15000});
+  if(!start.ok || !start.data || !start.data.job_id){
+    const d = NAPALM_DEMO[demoKey];
+    out.textContent=''; out.appendChild(rcard(d.title+' (demo — live call failed)', d.body, d.cls, d.tag));
+    return;
+  }
+  const jobId = start.data.job_id;
+  for(let i=0;i<40;i++){
+    await new Promise(r=>setTimeout(r, 500));
+    const poll = await apiFetch('/api/napalm/jobs/'+jobId, {method:'GET', timeout:8000});
+    if(!poll.ok || !poll.data) continue;
+    if(poll.data.status === 'done'){ renderResult(poll.data.result, siteVal); return; }
+    if(poll.data.status === 'error'){
+      out.textContent='';
+      out.appendChild(rcard('NAPALM error — '+siteVal, poll.data.message||'Unknown error', 'tag-crit', 'ERR'));
+      return;
+    }
+    loading('napalm-out', poll.data.message || ('Collecting from '+siteVal+'…'));
+  }
+  out.textContent='';
+  out.appendChild(rcard('NAPALM timeout — '+siteVal, 'Job did not complete in time (devices may be unreachable).', 'tag-warn', 'TIMEOUT'));
+}
+
 function mockNapalmVersion(){
-  const out=document.getElementById('napalm-out'); out.textContent='';
-  out.appendChild(rcard('Version Audit DE-FRA (4 devices)',
-    'de-fra-core-01  FRRouting 9.1.0  OK Current\nde-fra-core-02  FRRouting 9.1.0  OK Current\nde-fra-edge-01  FRRouting 8.5.3  WARN BEHIND\nde-fra-dist-01  FRRouting 9.0.2  OK Current\n\nSummary: 3/4 current  1/4 needs upgrade','tag-warn','WARN'));
+  const site = document.getElementById('nap-site-sel').value;
+  _napalmRunJob('version-audit', site, (result, siteVal)=>{
+    const out = document.getElementById('napalm-out'); out.textContent='';
+    const devs = (result&&result.devices)||[];
+    const lines = devs.map(d => d.error
+      ? `${d.hostname}  ERROR: ${d.error}`
+      : `${d.hostname}  ${d.vendor||'-'} ${d.os_version||'-'}  (driver=${d.driver})`).join('\n');
+    const errCount = devs.filter(d=>d.error).length;
+    out.appendChild(rcard(`Version Audit ${siteVal} (${devs.length} devices, LIVE)`,
+      lines||'No devices found for this site.', errCount?'tag-warn':'tag-ok', errCount?`${errCount} ERR`:'OK'));
+  }, 'version');
 }
 function mockNapalmBGP(){
-  const out=document.getElementById('napalm-out'); out.textContent='';
-  out.appendChild(rcard('BGP Status DE-FRA',
-    'de-fra-core-01  Peers: 3/3  All Established\nde-fra-core-02  Peers: 2/2  All Established\nde-fra-edge-01  Peers: 2/3  1 DOWN (10.200.0.15 AS65005)\n\nFlapping: 10.200.0.15 (8 flaps/24h)\nTotal prefixes: 4,218','tag-warn','WARN'));
+  const site = document.getElementById('nap-site-sel').value;
+  _napalmRunJob('bgp-status', site, (result, siteVal)=>{
+    const out = document.getElementById('napalm-out'); out.textContent='';
+    const devs = (result&&result.devices)||[];
+    const lines = devs.map(d => d.error
+      ? `${d.hostname}  ERROR: ${d.error}`
+      : `${d.hostname}  Peers: ${d.up}/${d.total}${d.down?'  '+d.down+' DOWN':'  All Established'}`).join('\n');
+    out.appendChild(rcard(`BGP Status ${siteVal} (LIVE)`,
+      (lines||'No devices found for this site.')+`\n\nTotal peers: ${result?result.total_peers:0}  Down: ${result?result.total_down:0}`,
+      (result&&result.total_down)?'tag-warn':'tag-ok', (result&&result.total_down)?'WARN':'OK'));
+  }, 'bgp');
 }
 function mockNapalmEnv(){
-  const out=document.getElementById('napalm-out'); out.textContent='';
-  out.appendChild(rcard('Env Health DE-FRA',
-    'de-fra-core-01  CPU:11%  MEM:29%  Temp:38C  Fans:OK  PSU:1/1\nde-fra-core-02  CPU:9%   MEM:27%  Temp:37C  Fans:OK  PSU:1/1\nde-fra-edge-01  CPU:6%   MEM:22%  Temp:35C  Fans:OK  PSU:1/1','tag-ok','OK'));
+  const site = document.getElementById('nap-site-sel').value;
+  _napalmRunJob('env-health', site, (result, siteVal)=>{
+    const out = document.getElementById('napalm-out'); out.textContent='';
+    const devs = (result&&result.devices)||[];
+    const lines = devs.map(d => d.error ? `${d.hostname}  ERROR: ${d.error}` : JSON.stringify(d)).join('\n');
+    out.appendChild(rcard(`Env Health ${siteVal} (LIVE)`, lines||'No devices found for this site.', 'tag-ok', 'OK'));
+  }, 'env');
 }
 function mockNapalmErrors(){
-  const out=document.getElementById('napalm-out'); out.textContent='';
-  out.appendChild(rcard('Interface Errors DE-FRA',
-    'de-fra-core-01  eth1  CRC:312   Discards:0    Input errors:312\nde-fra-core-02  eth0  CRC:8     Discards:2    Input errors:10\nde-fra-edge-01  eth2  CRC:0     Discards:289  Output drops:289\n\nAction: eth1 on de-fra-core-01 has high CRC — check SFP/fiber','tag-warn','WARN'));
+  const site = document.getElementById('nap-site-sel').value;
+  _napalmRunJob('interface-errors', site, (result, siteVal)=>{
+    const out = document.getElementById('napalm-out'); out.textContent='';
+    const errs = (result&&result.devices)||result||[];
+    const lines = Array.isArray(errs) && errs.length
+      ? errs.map(e => `${e.hostname}  ${e.interface}  rx_err:${e.rx_errors} tx_err:${e.tx_errors}`).join('\n')
+      : 'No interface errors detected.';
+    out.appendChild(rcard(`Interface Errors ${siteVal} (LIVE)`, lines, 'tag-ok', 'OK'));
+  }, 'errors');
 }
 
 /* ── Live BGP Topology ────────────────────────────────────────── */
