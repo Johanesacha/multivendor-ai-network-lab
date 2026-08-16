@@ -2959,6 +2959,40 @@ body.noc-wall .icon-rail{display:none}
       <div class="stat-card"><div class="sv" id="eval-ms" style="color:var(--purple)">—</div><div class="sl">Latency ms</div></div>
     </div>
     <div class="scroll-area" id="eval-out"></div>
+
+    <!-- ── Multi-model campaign (additive — the single-run tester above still
+         tests one scenario/agent at a fixed model; this compares several
+         models — Claude + local Ollama — on the same scenario set) ── -->
+    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;flex-shrink:0">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:700;color:#e5c07b">&#x1F52C; Comparaison multi-mod&#232;le</span>
+        <span style="font-size:11px;color:var(--muted)">Claude + mod&#232;les locaux Ollama sur les m&#234;mes sc&#233;narios</span>
+        <div class="spacer"></div>
+        <span style="font-size:10px;color:var(--muted)">R&#233;p&#233;titions&#160;:</span>
+        <input id="evalcmp-repeats" type="number" min="1" value="3" style="width:56px;background:var(--bg3);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 6px;font-size:12px"/>
+        <button class="btn p" onclick="runEvalCampaign()">&#x25B6; Lancer campagne</button>
+      </div>
+      <div id="evalcmp-progress" style="display:none;margin-top:6px;flex-shrink:0">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="spin"></span>
+          <span id="evalcmp-prog-msg" style="font-size:12px;color:var(--accent)">&#8230;</span>
+        </div>
+        <div style="background:var(--bg3);border-radius:4px;height:4px;margin-top:4px;overflow:hidden">
+          <div id="evalcmp-prog-fill" style="height:100%;background:var(--accent);width:0%;transition:width .3s"></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:8px;flex-shrink:0">
+        <div class="asec" style="flex:1;max-height:180px;overflow-y:auto">
+          <h4>Sc&#233;narios <span style="float:right;cursor:pointer;color:var(--accent)" onclick="evalCmpSelectAll('sc',true)">tout</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="evalCmpSelectAll('sc',false)">aucun</span></h4>
+          <div id="evalcmp-scenarios">Chargement&#8230;</div>
+        </div>
+        <div class="asec" style="flex:1;max-height:180px;overflow-y:auto">
+          <h4>Mod&#232;les <span style="float:right;cursor:pointer;color:var(--accent)" onclick="evalCmpSelectAll('mo',true)">tout</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="evalCmpSelectAll('mo',false)">aucun</span></h4>
+          <div id="evalcmp-models">Chargement&#8230;</div>
+        </div>
+      </div>
+      <div id="evalcmp-report" style="margin-top:8px;flex-shrink:0"></div>
+    </div>
   </div>
 
   <!-- ── Phase 3: Path Trace Tab ──────────────────────────────── -->

@@ -239,6 +239,134 @@
     setText('eval-status', `✓ ran ${rows.length}, avg ${avg.toFixed(1)}/10`);
   }
 
+  // ── Eval Harness: multi-model campaign ──────────────────────────
+  // Additive alongside the single-run tester above (which fixes the model to
+  // claude-haiku-4-5 and only varies scenario/agent). This section compares
+  // several models -- Claude + local Ollama -- on the same scenario set, via
+  // the campaign endpoints (/api/eval/*, src/app.py), calling the exact same
+  // eval_harness.run_campaign()/generate_report_markdown() as
+  // run_evaluation_cli.py and the src/index.html Eval Harness tab -- no
+  // separate implementation.
+  let _evalCmpLoaded = false;
+  let _evalCmpPoll = null;
+
+  async function loadEvalCampaignData() {
+    if (_evalCmpLoaded) return;
+    _evalCmpLoaded = true;
+    try {
+      const [scenarios, models] = await Promise.all([
+        api('/api/eval/scenarios'),
+        api('/api/eval/models'),
+      ]);
+      const scWrap = clear('evalcmp-scenarios');
+      (scenarios || []).forEach(s => {
+        const label = el('label', { style: 'display:flex;align-items:center;gap:5px;font-size:11px;padding:2px 0;cursor:pointer' });
+        label.appendChild(el('input', { type: 'checkbox', cls: 'evalcmp-sc-cb', value: s.id, checked: 'checked' }));
+        label.appendChild(el('code', { style: 'color:var(--accent)', text: s.id }));
+        label.appendChild(document.createTextNode(' — ' + s.title));
+        scWrap.appendChild(label);
+      });
+      const moWrap = clear('evalcmp-models');
+      (models || []).forEach(m => {
+        const label = el('label', { style: 'display:flex;align-items:center;gap:5px;font-size:11px;padding:2px 0;cursor:pointer' });
+        label.appendChild(el('input', { type: 'checkbox', cls: 'evalcmp-mo-cb', value: m.id, checked: 'checked' }));
+        label.appendChild(document.createTextNode(m.id + ' '));
+        label.appendChild(el('span', { style: 'color:var(--muted)', text: '(' + m.provider + ')' }));
+        moWrap.appendChild(label);
+      });
+    } catch (e) {
+      _evalCmpLoaded = false;
+      const wrap = document.getElementById('evalcmp-scenarios');
+      if (wrap) wrap.textContent = 'Erreur de chargement : ' + e.message;
+    }
+  }
+
+  function evalCmpSelectAll(kind, checked) {
+    document.querySelectorAll('.evalcmp-' + kind + '-cb').forEach(cb => { cb.checked = checked; });
+  }
+
+  function _evalCmpShowProgress(msg, pct) {
+    const box = document.getElementById('evalcmp-progress');
+    if (box) box.style.display = 'block';
+    setText('evalcmp-prog-msg', msg || '…');
+    const fill = document.getElementById('evalcmp-prog-fill');
+    if (fill) fill.style.width = (pct || 0) + '%';
+  }
+  function _evalCmpHideProgress() {
+    const box = document.getElementById('evalcmp-progress');
+    if (box) box.style.display = 'none';
+  }
+  function _evalCmpShowError(msg) {
+    const reportEl = clear('evalcmp-report');
+    reportEl.appendChild(el('div', { style: 'color:var(--red);padding:10px' }, '✗ ' + msg));
+  }
+  function _evalCmpRenderReport(result) {
+    const reportEl = clear('evalcmp-report');
+    const bar = el('div', { style: 'font-size:11px;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap' });
+    bar.appendChild(document.createTextNode('📄 JSONL : '));
+    bar.appendChild(el('code', { style: 'color:var(--accent)', text: result.jsonl_path }));
+    bar.appendChild(document.createTextNode(' · ' + result.total_runs + ' runs'));
+    reportEl.appendChild(bar);
+    // textContent, never innerHTML: the report embeds LLM-generated agent
+    // output, so it's rendered as plain text like every other model/API
+    // string on this page (see the file banner comment at the top).
+    const pre = el('pre', { style: 'white-space:pre-wrap;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:10px;font-size:11.5px;color:var(--text);max-height:420px;overflow-y:auto' });
+    pre.textContent = result.report_markdown;
+    reportEl.appendChild(pre);
+  }
+
+  function _evalCmpPollJob(jobId) {
+    if (_evalCmpPoll) clearInterval(_evalCmpPoll);
+    _evalCmpPoll = setInterval(async () => {
+      try {
+        const j = await api('/api/eval/jobs/' + jobId);
+        _evalCmpShowProgress(j.message, j.progress);
+        if (j.status === 'done') {
+          clearInterval(_evalCmpPoll);
+          _evalCmpHideProgress();
+          _evalCmpRenderReport(j.result);
+        } else if (j.status === 'error') {
+          clearInterval(_evalCmpPoll);
+          _evalCmpHideProgress();
+          _evalCmpShowError(j.message);
+        }
+      } catch (e) { /* transient poll failure — next tick retries */ }
+    }, 2000);
+  }
+
+  async function runEvalCampaign() {
+    const scenarios = Array.from(document.querySelectorAll('.evalcmp-sc-cb:checked')).map(cb => cb.value);
+    const models = Array.from(document.querySelectorAll('.evalcmp-mo-cb:checked')).map(cb => cb.value);
+    const repeats = parseInt(document.getElementById('evalcmp-repeats').value, 10) || 3;
+    if (!scenarios.length) { _evalCmpShowError('Sélectionne au moins un scénario.'); return; }
+    if (!models.length) { _evalCmpShowError('Sélectionne au moins un modèle.'); return; }
+
+    clear('evalcmp-report');
+    _evalCmpShowProgress('Démarrage…', 0);
+    try {
+      // Direct fetch (not the shared api() helper) so a 400 validation error
+      // from the server (e.g. "Unknown scenario(s): ...") surfaces its exact
+      // message instead of api()'s generic "HTTP 400" on any non-2xx.
+      const r = await fetch(API_BASE + '/api/eval/run', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scenarios, models, repeats }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.error) {
+        _evalCmpHideProgress();
+        _evalCmpShowError(j.error || ('HTTP ' + r.status));
+        return;
+      }
+      _evalCmpPollJob(j.job_id);
+    } catch (e) {
+      _evalCmpHideProgress();
+      _evalCmpShowError(e.message);
+    }
+  }
+
+  window.runEvalCampaign = runEvalCampaign;
+  window.evalCmpSelectAll = evalCmpSelectAll;
+
   // ── Path Trace ────────────────────────────────────────────────
   let _pathLoaded = false;
   async function loadPathDevices() {
@@ -474,7 +602,7 @@
     Object.assign(window.MV_TAB_INIT, {
       'mv-orchestrator': () => {},
       'mv-intent': loadIntent,
-      'mv-eval': loadEvalScenarios,
+      'mv-eval': () => { loadEvalScenarios(); loadEvalCampaignData(); },
       'mv-path': loadPathDevices,
       'mv-gait': loadGait,
     });
