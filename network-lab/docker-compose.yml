@@ -21,6 +21,9 @@ services:
     container_name: de-fra-core-01
     hostname: de-fra-core-01
     privileged: true
+    environment:
+      - CLI_PROXY_PASSWORD=${CLI_PROXY_PASSWORD}
+      - CLI_PROXY_HOST=0.0.0.0
     sysctls:
       - net.ipv4.ip_forward=1
     networks:
@@ -39,6 +42,9 @@ services:
     container_name: de-fra-core-02
     hostname: de-fra-core-02
     privileged: true
+    environment:
+      - CLI_PROXY_PASSWORD=${CLI_PROXY_PASSWORD}
+      - CLI_PROXY_HOST=0.0.0.0
     sysctls:
       - net.ipv4.ip_forward=1
     networks:
@@ -57,6 +63,9 @@ services:
     container_name: uk-lon-core-01
     hostname: uk-lon-core-01
     privileged: true
+    environment:
+      - CLI_PROXY_PASSWORD=${CLI_PROXY_PASSWORD}
+      - CLI_PROXY_HOST=0.0.0.0
     sysctls:
       - net.ipv4.ip_forward=1
     networks:
@@ -75,6 +84,9 @@ services:
     container_name: nl-ams-core-01
     hostname: nl-ams-core-01
     privileged: true
+    environment:
+      - CLI_PROXY_PASSWORD=${CLI_PROXY_PASSWORD}
+      - CLI_PROXY_HOST=0.0.0.0
     sysctls:
       - net.ipv4.ip_forward=1
     networks:
@@ -93,6 +105,9 @@ services:
     container_name: us-nyc-core-01
     hostname: us-nyc-core-01
     privileged: true
+    environment:
+      - CLI_PROXY_PASSWORD=${CLI_PROXY_PASSWORD}
+      - CLI_PROXY_HOST=0.0.0.0
     sysctls:
       - net.ipv4.ip_forward=1
     networks:
@@ -111,6 +126,9 @@ services:
     container_name: de-fra-edge-01
     hostname: de-fra-edge-01
     privileged: true
+    environment:
+      - CLI_PROXY_PASSWORD=${CLI_PROXY_PASSWORD}
+      - CLI_PROXY_HOST=0.0.0.0
     sysctls:
       - net.ipv4.ip_forward=1
     networks:
@@ -129,6 +147,9 @@ services:
     container_name: uk-lon-edge-01
     hostname: uk-lon-edge-01
     privileged: true
+    environment:
+      - CLI_PROXY_PASSWORD=${CLI_PROXY_PASSWORD}
+      - CLI_PROXY_HOST=0.0.0.0
     sysctls:
       - net.ipv4.ip_forward=1
     networks:
@@ -147,6 +168,9 @@ services:
     container_name: nl-ams-edge-01
     hostname: nl-ams-edge-01
     privileged: true
+    environment:
+      - CLI_PROXY_PASSWORD=${CLI_PROXY_PASSWORD}
+      - CLI_PROXY_HOST=0.0.0.0
     sysctls:
       - net.ipv4.ip_forward=1
     networks:
@@ -165,6 +189,9 @@ services:
     container_name: uk-lon-dist-01
     hostname: uk-lon-dist-01
     privileged: true
+    environment:
+      - CLI_PROXY_PASSWORD=${CLI_PROXY_PASSWORD}
+      - CLI_PROXY_HOST=0.0.0.0
     sysctls:
       - net.ipv4.ip_forward=1
     networks:
@@ -183,6 +210,9 @@ services:
     container_name: de-fra-dist-01
     hostname: de-fra-dist-01
     privileged: true
+    environment:
+      - CLI_PROXY_PASSWORD=${CLI_PROXY_PASSWORD}
+      - CLI_PROXY_HOST=0.0.0.0
     sysctls:
       - net.ipv4.ip_forward=1
     networks:
