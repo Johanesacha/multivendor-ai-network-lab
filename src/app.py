@@ -66,6 +66,7 @@ import paramiko
 import requests as _requests
 from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
 import llm_client
+import eval_harness
 
 app = Flask(__name__)
 
@@ -15606,6 +15607,130 @@ try:
         print("[AUTO-REMEDIATE] 6 endpoints registered (loop OFF — set MVLAB_AUTO_REMEDIATE_S=N)")
 except Exception as _ar_err:  # noqa: BLE001 — never block app boot
     print(f"[AUTO-REMEDIATE] unavailable: {_ar_err}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EVAL HARNESS — Multi-model evaluation campaigns (Eval Harness UI panel)
+# ══════════════════════════════════════════════════════════════════════════════
+# Same job-dict + background-thread + polling pattern as the NAPALM endpoints
+# above (_napalm_jobs / _napalm_new_job / _napalm_update_job). The actual
+# evaluation and report logic lives entirely in eval_harness.py — this layer
+# only turns run_campaign()/generate_report_markdown() into an async job so
+# a browser tab can watch progress instead of blocking on a request for
+# however long the campaign takes (local Ollama models: potentially hours).
+_eval_jobs = {}
+_eval_jobs_lock = threading.Lock()
+
+
+def _eval_new_job():
+    job_id = f"eval_{int(time.time() * 1000)}"
+    with _eval_jobs_lock:
+        _bounded_insert(_eval_jobs, job_id, {
+            "id": job_id, "status": "running", "progress": 0,
+            "message": "Starting...", "result": None,
+            "started": datetime.now().isoformat(),
+        }, max_size=50)
+    return job_id
+
+
+def _eval_update_job(job_id, **kwargs):
+    with _eval_jobs_lock:
+        if job_id in _eval_jobs:
+            _eval_jobs[job_id].update(kwargs)
+
+
+@app.route("/api/eval/scenarios")
+def eval_scenarios():
+    scenarios = eval_harness.load_scenarios()
+    return jsonify([
+        {"id": s["id"], "title": s["title"], "category": s["category"], "severity": s.get("severity", "")}
+        for s in scenarios
+    ])
+
+
+@app.route("/api/eval/models")
+def eval_models():
+    return jsonify([
+        {"id": model_id, "provider": entry["provider"]}
+        for model_id, entry in llm_client.MODEL_REGISTRY.items()
+    ])
+
+
+@app.route("/api/eval/jobs/<job_id>")
+def eval_job(job_id):
+    with _eval_jobs_lock:
+        job = _eval_jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    return jsonify(job)
+
+
+@app.route("/api/eval/run", methods=["POST"])
+def eval_run():
+    data = request.json or {}
+    all_scenario_ids = [s["id"] for s in eval_harness.load_scenarios()]
+    all_model_ids = list(llm_client.MODEL_REGISTRY.keys())
+
+    # `or` would treat an explicit [] / 0 the same as "field omitted" and
+    # silently fall back to "all scenarios" / "all models" / repeats=3 --
+    # exactly the wrong behavior for a value the caller deliberately sent to
+    # be validated and rejected. Distinguish "key absent or null" (use
+    # default) from "key present with a falsy value" (validate as given).
+    scenario_ids = data.get("scenarios")
+    if scenario_ids is None:
+        scenario_ids = all_scenario_ids
+    model_ids = data.get("models")
+    if model_ids is None:
+        model_ids = all_model_ids
+    repeats = data.get("repeats")
+    if repeats is None:
+        repeats = 3
+    try:
+        repeats = int(repeats)
+    except (TypeError, ValueError):
+        return jsonify({"error": "repeats must be an integer"}), 400
+    agent = data.get("agent") or "ai_command"
+
+    unknown_scenarios = [s for s in scenario_ids if s not in all_scenario_ids]
+    if unknown_scenarios:
+        return jsonify({"error": f"Unknown scenario(s): {', '.join(unknown_scenarios)}"}), 400
+    unknown_models = [m for m in model_ids if m not in all_model_ids]
+    if unknown_models:
+        return jsonify({"error": f"Unknown model(s): {', '.join(unknown_models)}"}), 400
+    if not scenario_ids or not model_ids:
+        return jsonify({"error": "At least one scenario and one model are required"}), 400
+    if repeats < 1:
+        return jsonify({"error": "repeats must be >= 1"}), 400
+
+    job_id = _eval_new_job()
+    total = len(scenario_ids) * len(model_ids) * repeats
+
+    def _run():
+        try:
+            def _progress(done, tot, result):
+                _eval_update_job(
+                    job_id, progress=int(done / tot * 100),
+                    message=f"{done}/{tot} — {result.get('scenario_id')} / {result.get('agent_model_id')} "
+                            f"({result.get('agent_path')})",
+                )
+            path = eval_harness.run_campaign(
+                scenario_ids, model_ids, repeats=repeats, agent=agent, on_progress=_progress,
+            )
+            with open(path, encoding="utf-8") as f:
+                results = [json.loads(line) for line in f]
+            report_md = eval_harness.generate_report_markdown(
+                results, title="Rapport d'évaluation multi-modèle"
+            )
+            _eval_update_job(
+                job_id, status="done", progress=100,
+                message=f"Terminé — {len(results)} runs",
+                result={"jsonl_path": path, "report_markdown": report_md, "total_runs": len(results)},
+            )
+        except Exception as e:
+            _eval_update_job(job_id, status="error", message=str(e))
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"job_id": job_id, "total_runs": total})
 
 
 if __name__ == "__main__":
