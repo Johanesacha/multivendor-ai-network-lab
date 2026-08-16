@@ -12156,7 +12156,11 @@ def _nornir_worker(dev: dict, cmd: str) -> dict:
         if not result.get("success", True):
             return {"hostname": dev["hostname"], "status": "error", "output": out_text, "elapsed": round(elapsed, 2)}
         lower = out_text.lower()
-        if "error" in lower or "alarm" in lower or "down" in lower:
+        # Word-boundary match, excluding "down" preceded by "/" -- otherwise
+        # every healthy `show bgp summary` trips this, because its own
+        # column header is literally "Up/Down" (see UI_TESTING_LOG.md bug #7).
+        if (re.search(r'\berror\b', lower) or re.search(r'\balarm\b', lower)
+                or re.search(r'(?<!/)\bdown\b', lower)):
             status = "warn"
         elif out_text and len(out_text.strip()) > 10:
             status = "ok"
