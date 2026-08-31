@@ -748,3 +748,504 @@ def _stub_agent(symptom: str) -> str:
         "compare local and remote BGP/OSPF area/AS configuration, align MTU, restart neighbor "
         "(clear bgp neighbor) once root cause is confirmed."
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validation sub-study — live vs. synthetic symptom grounding
+# ─────────────────────────────────────────────────────────────────────────────
+# Recommended by the external methodology review. The main campaign above
+# (synthesize_symptom / run_campaign) hands the agent a fixed, templated
+# description of an assumed fault — the module docstring says plainly this
+# lab is "best-effort" and "for some faults we just describe the symptom...
+# without actually modifying state." This sub-study asks a narrower,
+# falsifiable question for the 5 scenarios where a real vtysh query can
+# stand in for that template: does grounding the same agent+model in ACTUAL
+# live device state (which, in a healthy lab, usually contradicts the
+# synthetic premise) change its score in a way that matters?
+#
+# It deliberately reuses every piece of the main pipeline it can
+# (_invoke_agent_with_usage, keyword_score, llm_judge, aggregate_results) so
+# the only variable between "synthetic" and "live" rows is the symptom text
+# itself, never a second scoring implementation that could drift from the
+# first.
+
+LIVE_CAPABLE_SCENARIOS = ["bgp-001", "bgp-002", "ospf-001", "intf-001", "intent-001"]
+
+# Minimal hostname -> management IP map for the 5 scenarios above, sourced
+# from network-lab/configs/{r1..r5}/frr.conf (de-fra-core-01=r1, ...,
+# us-nyc-core-01=r5). Static lab topology — not worth rediscovering by a
+# live query on every call just to resolve a peer's own IP.
+_LAB_DEVICE_IPS = {
+    "de-fra-core-01": "10.200.0.11",
+    "de-fra-core-02": "10.200.0.12",
+    "uk-lon-core-01": "10.200.0.13",
+    "nl-ams-core-01": "10.200.0.14",
+    "us-nyc-core-01": "10.200.0.15",
+}
+
+_RAW_EXCERPT_CHARS = 1000
+
+
+def _excerpt(raw: str | None, n: int = _RAW_EXCERPT_CHARS) -> str:
+    raw = (raw or "").strip()
+    return raw if len(raw) <= n else raw[:n] + f"\n... [truncated, {len(raw)} chars total]"
+
+
+def _frr_driver(device: str):
+    """Lazy import, matching the rest of the codebase's convention (drivers.*
+    is imported inside functions, never at module load — see health.py)."""
+    from drivers.factory import get_driver
+    return get_driver("frr", container=device)
+
+
+def synthesize_live_symptom(scenario: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """
+    Live counterpart to synthesize_symptom(): instead of a fixed template
+    describing an assumed fault, run the real vtysh command(s) this
+    scenario's fault type calls for against the actual FRR containers (via
+    drivers.factory.get_driver + DockerExecTransport — the same driver layer
+    health.py uses, not a bespoke subprocess call), and hand the agent a
+    symptom grounded in what those commands returned right now.
+
+    Only defined for LIVE_CAPABLE_SCENARIOS — raises ValueError otherwise;
+    run_validation_substudy never calls this on anything else.
+
+    Returns (symptom_text, evidence). evidence carries the raw command(s)
+    and parsed peer/interface data used to build the symptom, so a JSONL
+    reader (or the UI) can see exactly what live output the agent was
+    grounded in, not just take the symptom text on faith.
+    """
+    f = scenario["fault"]
+    t = f["type"]
+    evidence: dict[str, Any] = {"fault_type": t}
+
+    if t == "bgp_peer_down":
+        device, peer_ip, peer_hostname = f["device"], f["peer_ip"], f["peer_hostname"]
+        res = _frr_driver(device).get_bgp_summary()
+        peer = next((p for p in (res.normalized or {}).get("peers", []) if p.get("neighbor") == peer_ip), None)
+        evidence.update(device=device, command=res.command, raw=_excerpt(res.raw), peer=peer)
+        observed = (
+            f"state={peer.get('state')}, remote AS={peer.get('asn')}, uptime={peer.get('uptime')}, "
+            f"prefixes received={peer.get('prefixes')}"
+        ) if peer else "peer not present in the current BGP table at all"
+        symptom = (
+            f"Live check just run on {device} (`{res.command}`, via docker exec/vtysh): "
+            f"peer {peer_ip} ({peer_hostname}) — {observed}.\n\n"
+            f"Raw output:\n{_excerpt(res.raw)}\n\n"
+            "Diagnose the peer's current state from this live output. If it looks healthy, say so "
+            "explicitly instead of inventing a fault that isn't there."
+        )
+        return symptom, evidence
+
+    if t == "bgp_as_mismatch":
+        device, peer_hostname = f["device"], f["peer_hostname"]
+        peer_ip = _LAB_DEVICE_IPS.get(peer_hostname)
+        res = _frr_driver(device).get_bgp_summary()
+        peer = next((p for p in (res.normalized or {}).get("peers", []) if p.get("neighbor") == peer_ip), None)
+        evidence.update(device=device, command=res.command, raw=_excerpt(res.raw), peer=peer, peer_ip=peer_ip)
+        observed = (
+            f"state={peer.get('state')}, remote AS as configured/observed here={peer.get('asn')}"
+        ) if peer else f"no session found towards {peer_ip} ({peer_hostname}) at all"
+        symptom = (
+            f"Live check just run on {device} (`{res.command}`, via docker exec/vtysh) for its session "
+            f"towards {peer_hostname} ({peer_ip}): {observed}.\n\n"
+            f"Raw output:\n{_excerpt(res.raw)}\n\n"
+            f"The scenario under test claims a local misconfiguration (remote-as {f.get('configured_as')} "
+            f"instead of the peer's real AS {f.get('expected_as')}). Diagnose from the live output above "
+            "whether that AS mismatch is actually present right now, and fix it if so."
+        )
+        return symptom, evidence
+
+    if t == "ospf_area_mismatch":
+        device, peer_hostname = f["device"], f["peer_hostname"]
+        nbr_res = _frr_driver(device).get_ospf_neighbors()
+        iface_res = _frr_driver(device).run_command("show ip ospf interface")
+        evidence.update(
+            device=device, neighbor_command=nbr_res.command, neighbor_raw=_excerpt(nbr_res.raw),
+            interface_command=iface_res.command, interface_raw=_excerpt(iface_res.raw),
+            neighbors=(nbr_res.normalized or {}).get("neighbors"),
+        )
+        symptom = (
+            f"Live check just run on {device} via docker exec/vtysh:\n\n"
+            f"`{nbr_res.command}`:\n{_excerpt(nbr_res.raw)}\n\n"
+            f"`{iface_res.command}` (shows the configured OSPF area per interface):\n{_excerpt(iface_res.raw)}\n\n"
+            f"The scenario under test claims an area mismatch between {device} and {peer_hostname} "
+            f"(local area {f.get('configured_area')} vs peer area {f.get('expected_area')}). Diagnose from "
+            "the live output above whether that mismatch is actually present, and fix it if so."
+        )
+        return symptom, evidence
+
+    if t == "interface_down":
+        device, iface_name = f["device"], f["interface"]
+        res = _frr_driver(device).get_interface_status()
+        iface = next((i for i in (res.normalized or {}).get("list", []) if i.get("name") == iface_name), None)
+        evidence.update(device=device, command=res.command, raw=_excerpt(res.raw), interface=iface)
+        observed = f"status={iface.get('status')}" if iface else "interface not found in the live output"
+        symptom = (
+            f"Live check just run on {device} (`{res.command}`, via docker exec/vtysh): "
+            f"interface {iface_name} — {observed}.\n\n"
+            f"Raw output:\n{_excerpt(res.raw)}\n\n"
+            "Diagnose the interface's current state from this live output. If it looks healthy, say so "
+            "explicitly instead of inventing a fault that isn't there."
+        )
+        return symptom, evidence
+
+    if t == "intent_drift":
+        device, claimed_peer = f["device"], f["claimed_peer"]
+        res = _frr_driver(device).get_bgp_summary()
+        peer = next((p for p in (res.normalized or {}).get("peers", []) if p.get("neighbor") == claimed_peer), None)
+        evidence.update(device=device, command=res.command, raw=_excerpt(res.raw), peer=peer)
+        observed = (
+            f"present, state={peer.get('state')}" if peer else "absent — no such neighbor in the live BGP table"
+        )
+        symptom = (
+            f"Live check just run on {device} (`{res.command}`, via docker exec/vtysh) for the peer NetBox "
+            f"claims should exist ({claimed_peer}): {observed}.\n\n"
+            f"Raw output:\n{_excerpt(res.raw)}\n\n"
+            "Diagnose the drift between NetBox's claim and the live device state above, and propose a fix."
+        )
+        return symptom, evidence
+
+    raise ValueError(f"synthesize_live_symptom: unsupported fault type {t!r} (not in LIVE_CAPABLE_SCENARIOS)")
+
+
+def _load_synthetic_baseline(scenario_ids: list[str]) -> dict[tuple[str, str], dict[str, Any]]:
+    """
+    Re-read the main campaign's already-recorded synthetic-mode scores for
+    (scenario_id, model_id) pairs in scenario_ids, from every campaign JSONL
+    already on disk under campaign_results/ — the historical, already-
+    validated main campaign. This function only reads; it never re-runs
+    anything.
+
+    Multiple campaign files can cover the same (scenario, model, repeat)
+    cell (e.g. a retry pass for a model that timed out the first time) —
+    later files (by mtime) win for a given cell, mirroring how a human
+    reading the directory chronologically would reconcile them.
+
+    Returns {(scenario_id, model_id): aggregate_results(...)}, using the
+    exact same aggregate_results() the main report table uses, so the
+    "synthetic" side of the comparison is never a second, drifted
+    implementation of the same math.
+    """
+    import glob
+    files = sorted(
+        glob.glob(os.path.join(_CAMPAIGN_RESULTS_DIR, "campaign-*.jsonl")),
+        key=os.path.getmtime,
+    )
+    merged: dict[tuple[str, str, Any], dict[str, Any]] = {}
+    for path in files:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    row = json.loads(line)
+                    if row.get("scenario_id") not in scenario_ids:
+                        continue
+                    key = (row.get("scenario_id"), row.get("agent_model_id"), row.get("repeat"))
+                    merged[key] = row  # later file (by mtime) overwrites
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("_load_synthetic_baseline: skipping unreadable %s: %s", path, e)
+
+    by_pair: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for (scenario_id, model_id, _rep), row in merged.items():
+        by_pair.setdefault((scenario_id, model_id), []).append(row)
+
+    return {pair: aggregate_results(rows) for pair, rows in by_pair.items()}
+
+
+def _score_bucket(score: float | None) -> str | None:
+    """Same 3-tier thresholds the UI already uses to color a score (green
+    >=7, yellow 4-6.9, red <4) — kept identical so "agreement" here means
+    the same thing as the color a demo audience sees on screen."""
+    if score is None:
+        return None
+    if score >= 7:
+        return "good"
+    if score >= 4:
+        return "medium"
+    return "poor"
+
+
+def run_validation_substudy(
+    model_ids: list[str] | None = None,
+    agent: str = "ai_command",
+    judge_model_id: str = JUDGE_MODEL,
+    output_path: str | None = None,
+    on_progress: Callable[[int, int, dict[str, Any]], None] | None = None,
+) -> str:
+    """
+    Live-vs-synthetic validation sub-study (external methodology review).
+
+    For each of the 5 LIVE_CAPABLE_SCENARIOS x each model in model_ids, runs
+    the SAME agent/model/scoring pipeline as the main campaign
+    (_invoke_agent_with_usage, keyword_score, llm_judge) but on a symptom
+    built from a real, just-executed vtysh query (synthesize_live_symptom)
+    instead of the fixed template (synthesize_symptom). One live run per
+    (scenario, model) cell — this is a targeted spot-check against the
+    already-validated main campaign, not a new campaign, so it does not
+    repeat 3x per cell the way run_campaign does.
+
+    The synthetic side of the comparison is read from whatever main-campaign
+    JSONL files already exist under campaign_results/ (see
+    _load_synthetic_baseline) — it is never re-run here.
+
+    Writes one JSON line per (scenario, model) cell to a new, timestamped
+    file (never overwritten, matching run_campaign's convention) with the
+    live run's raw result plus the synthetic baseline and the comparison
+    (score deltas, bucket agreement) folded into each row, so the JSONL is
+    self-contained for offline analysis. Returns the path to that file.
+    """
+    scenario_ids = LIVE_CAPABLE_SCENARIOS
+    if model_ids is None:
+        model_ids = list(llm_client.MODEL_REGISTRY.keys())
+
+    baseline = _load_synthetic_baseline(scenario_ids)
+
+    if output_path is None:
+        os.makedirs(_CAMPAIGN_RESULTS_DIR, exist_ok=True)
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        output_path = os.path.join(_CAMPAIGN_RESULTS_DIR, f"validation-substudy-{ts}.jsonl")
+    else:
+        out_dir = os.path.dirname(output_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+
+    total = len(scenario_ids) * len(model_ids)
+    done = 0
+    with open(output_path, "a", encoding="utf-8") as fh:
+        for scenario_id in scenario_ids:
+            scenario = get_scenario(scenario_id)
+            for model_id in model_ids:
+                t0 = time.time()
+                try:
+                    live_symptom, evidence = synthesize_live_symptom(scenario)
+                    query_error = None
+                except Exception as e:  # noqa: BLE001 — device unreachable, docker exec failed, etc.
+                    logger.warning("run_validation_substudy: live query failed for %s: %s", scenario_id, e)
+                    live_symptom = (
+                        f"[Live query failed: {e}] Falling back to the synthetic symptom for scoring "
+                        f"purposes only:\n\n" + synthesize_symptom(scenario)
+                    )
+                    evidence = {"error": str(e)}
+                    query_error = str(e)
+
+                agent_output, agent_usage, agent_path, stub_reason = _invoke_agent_with_usage(
+                    agent, live_symptom, model_id
+                )
+                elapsed_ms = int((time.time() - t0) * 1000)
+
+                kscore = keyword_score(agent_output, scenario)
+                jscore = llm_judge(live_symptom, agent_output, scenario, judge_model_id)
+
+                base = baseline.get((scenario_id, model_id))
+                synthetic_kw = base["mean_keyword_score"] if base else None
+                synthetic_llm = base["mean_llm_score"] if base else None
+                synthetic_n = base["included_runs"] if base else 0
+
+                live_kw = kscore["score"]
+                live_llm = None
+                if isinstance(jscore, dict) and not jscore.get("error"):
+                    live_llm = _coerce_score(jscore.get("score"))
+
+                kw_agree = (_score_bucket(synthetic_kw) == _score_bucket(live_kw)) if synthetic_kw is not None else None
+                llm_agree = (
+                    _score_bucket(synthetic_llm) == _score_bucket(live_llm)
+                    if synthetic_llm is not None and live_llm is not None else None
+                )
+
+                result = {
+                    "scenario_id": scenario_id,
+                    "scenario": {
+                        "title": scenario["title"], "category": scenario["category"],
+                        "severity": scenario["severity"],
+                    },
+                    "agent": agent,
+                    "agent_model_id": model_id,
+                    "judge_model_id": judge_model_id,
+                    "agent_path": agent_path,
+                    "stub_reason": stub_reason,
+                    "mode": "live",
+                    "live_query_error": query_error,
+                    "live_evidence": evidence,
+                    "symptom": live_symptom,
+                    "agent_output": agent_output,
+                    "keyword_score": kscore,
+                    "llm_score": jscore,
+                    "total_ms": elapsed_ms,
+                    "model_cost": {
+                        "input": int(agent_usage.get("input", 0)), "output": int(agent_usage.get("output", 0)),
+                    },
+                    "comparison": {
+                        "synthetic_keyword_score": synthetic_kw,
+                        "synthetic_llm_score": synthetic_llm,
+                        "synthetic_included_runs": synthetic_n,
+                        "live_keyword_score": live_kw,
+                        "live_llm_score": live_llm,
+                        "keyword_delta": round(live_kw - synthetic_kw, 2) if synthetic_kw is not None else None,
+                        "llm_delta": (
+                            round(live_llm - synthetic_llm, 2)
+                            if synthetic_llm is not None and live_llm is not None else None
+                        ),
+                        "keyword_bucket_agree": kw_agree,
+                        "llm_bucket_agree": llm_agree,
+                    },
+                }
+
+                gait_audit.record(
+                    actor="eval_harness",
+                    action="run_validation_substudy",
+                    target=scenario["fault"].get("device"),
+                    prompt=live_symptom,
+                    response=agent_output[:500],
+                    tools_called=[agent, "docker-exec/vtysh"],
+                    tokens={"input": result["model_cost"]["input"], "output": result["model_cost"]["output"]},
+                    status="ok" if agent_path == "live" else "stub",
+                    extra={
+                        "scenario_id": scenario_id, "agent_model_id": model_id,
+                        "keyword_bucket_agree": kw_agree, "llm_bucket_agree": llm_agree,
+                    },
+                )
+
+                fh.write(json.dumps(result, default=str) + "\n")
+                fh.flush()
+                done += 1
+                logger.info(
+                    "run_validation_substudy: %d/%d done (scenario=%s model=%s)",
+                    done, total, scenario_id, model_id,
+                )
+                if on_progress is not None:
+                    on_progress(done, total, result)
+
+    return output_path
+
+
+def validation_substudy_stats(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Structured agreement summary for the UI's tiles/table — global agreement
+    rate, per-scenario agreement rate, and the raw per-(scenario, model)
+    rows, all derived from the `comparison` block each
+    run_validation_substudy() row already carries (never recomputed
+    differently here, so the UI and the markdown report can't drift apart).
+    """
+    rows = []
+    for r in results:
+        cmp = r.get("comparison") or {}
+        rows.append({
+            "scenario_id": r.get("scenario_id"),
+            "scenario_title": (r.get("scenario") or {}).get("title"),
+            "model_id": r.get("agent_model_id"),
+            "agent_path": r.get("agent_path"),
+            **cmp,
+        })
+
+    def _rate(flags: list[bool]) -> float | None:
+        return round(100 * sum(1 for x in flags if x) / len(flags), 1) if flags else None
+
+    kw_flags_all = [r["keyword_bucket_agree"] for r in rows if r["keyword_bucket_agree"] is not None]
+    llm_flags_all = [r["llm_bucket_agree"] for r in rows if r["llm_bucket_agree"] is not None]
+
+    by_scenario: dict[str, dict[str, Any]] = {}
+    for sid in LIVE_CAPABLE_SCENARIOS:
+        srows = [r for r in rows if r["scenario_id"] == sid]
+        kw_flags = [r["keyword_bucket_agree"] for r in srows if r["keyword_bucket_agree"] is not None]
+        llm_flags = [r["llm_bucket_agree"] for r in srows if r["llm_bucket_agree"] is not None]
+        by_scenario[sid] = {
+            "title": srows[0]["scenario_title"] if srows else sid,
+            "n": len(srows),
+            "keyword_agreement_pct": _rate(kw_flags),
+            "llm_agreement_pct": _rate(llm_flags),
+        }
+
+    return {
+        "rows": rows,
+        "global_keyword_agreement_pct": _rate(kw_flags_all),
+        "global_llm_agreement_pct": _rate(llm_flags_all),
+        "by_scenario": by_scenario,
+        "total_cells": len(rows),
+    }
+
+
+def generate_validation_substudy_report_markdown(
+    results: list[dict[str, Any]], title: str = "Sous-étude de validation — live vs synthétique"
+) -> str:
+    """
+    Human-readable French report for run_validation_substudy() output — same
+    shared-generator pattern as generate_report_markdown() (CLI and web UI
+    both call this one function, never two separate report implementations).
+    """
+    if not results:
+        return f"# {title}\n\nAucun run à rapporter.\n"
+
+    stats = validation_substudy_stats(results)
+    kw_pct = stats["global_keyword_agreement_pct"]
+    llm_pct = stats["global_llm_agreement_pct"]
+    lines = [
+        f"# {title}",
+        "",
+        f"**Date :** {time.strftime('%Y-%m-%d %H:%M:%S')}  ",
+        f"**Cellules (scénario × modèle) :** {stats['total_cells']}  ",
+        f"**Taux d'accord global (score mots-clés) :** {kw_pct if kw_pct is not None else '—'}%  ",
+        f"**Taux d'accord global (score juge LLM) :** {llm_pct if llm_pct is not None else '—'}%",
+        "",
+        "## Méthodologie (résumé)",
+        "",
+        "Pour chaque paire (scénario, modèle), le score **synthétique** est relu tel quel depuis "
+        "les campagnes principales déjà enregistrées (`campaign_results/campaign-*.jsonl`) — jamais "
+        "rejoué. Le score **live** vient d'un run neuf où le symptôme envoyé à l'agent est construit "
+        "à partir d'une commande vtysh réellement exécutée sur le routeur FRR concerné "
+        "(`docker exec ... vtysh -c ...`), au lieu du texte fixe habituel. Un **accord** signifie que "
+        "synthétique et live tombent dans le même palier de score : 🟢 bon (≥7) · 🟡 moyen (4-6.9) · "
+        "🔴 faible (<4) — les mêmes seuils que les couleurs utilisées ailleurs dans l'UI.",
+        "",
+        "## Détail par scénario × modèle",
+        "",
+        "| Scénario | Modèle | Synthétique (mots-clés) | Live (mots-clés) | Δ | Synthétique (juge) | "
+        "Live (juge) | Δ | Accord mots-clés | Accord juge |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+
+    def _fmt(v: Any) -> str:
+        return "—" if v is None else str(v)
+
+    def _agree(v: bool | None) -> str:
+        return "✅" if v is True else ("❌" if v is False else "—")
+
+    for r in stats["rows"]:
+        lines.append(
+            f"| {r['scenario_id']} | {r['model_id']} | {_fmt(r.get('synthetic_keyword_score'))} | "
+            f"{_fmt(r.get('live_keyword_score'))} | {_fmt(r.get('keyword_delta'))} | "
+            f"{_fmt(r.get('synthetic_llm_score'))} | {_fmt(r.get('live_llm_score'))} | "
+            f"{_fmt(r.get('llm_delta'))} | {_agree(r.get('keyword_bucket_agree'))} | "
+            f"{_agree(r.get('llm_bucket_agree'))} |"
+        )
+
+    lines += [
+        "", "## Taux d'accord par scénario", "",
+        "| Scénario | n | Accord mots-clés | Accord juge |", "|---|---|---|---|",
+    ]
+    for sid, s in stats["by_scenario"].items():
+        kw = f"{s['keyword_agreement_pct']}%" if s["keyword_agreement_pct"] is not None else "—"
+        llm = f"{s['llm_agreement_pct']}%" if s["llm_agreement_pct"] is not None else "—"
+        lines.append(f"| {sid} ({s['title']}) | {s['n']} | {kw} | {llm} |")
+
+    stub_rows = [r for r in results if r.get("agent_path") == "stub"]
+    lines += [
+        "", "## Limitations", "",
+        "- **1 seul run live par cellule** (spot-check ciblé, pas une nouvelle campagne à 3 "
+        "répétitions) — une cellule en désaccord peut refléter la variance normale d'un LLM autant "
+        "qu'un vrai écart synthétique/live.",
+        "- Le **score juge (LLM)** est souvent absent côté synthétique (valeur non numérique renvoyée "
+        "par le juge sur une fraction significative des runs historiques — limitation déjà documentée "
+        "dans `aggregate_results()`) ; le taux d'accord **mots-clés** est plus complet et plus fiable "
+        "que le taux d'accord juge pour cette raison.",
+        f"- **{len(stub_rows)}** run(s) live sont en fait des stubs (modèle injoignable) — exclus de "
+        "l'interprétation, comptés séparément.",
+        "- Le lab étant actuellement sain (aucun de ces 5 scénarios n'est réellement injecté), un "
+        "désaccord peut aussi signifier que le modèle a correctement reconnu l'absence de panne en "
+        "mode live là où le texte synthétique lui décrivait une panne fictive — ce n'est pas "
+        "nécessairement une erreur du modèle.",
+    ]
+
+    return "\n".join(lines) + "\n"
