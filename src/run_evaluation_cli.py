@@ -19,6 +19,17 @@ import sys
 import time
 from pathlib import Path
 
+# The validation-substudy report uses emoji/checkmarks (🟢/✅/❌) and Δ that
+# Windows' legacy console codepage (cp1252/850) can't encode -- Git Bash
+# doesn't fix this on its own since Python still falls back to
+# locale.getpreferredencoding() when stdout isn't a real Win32 console.
+# Reconfigure defensively so this never crashes a demo; harmless no-op on
+# platforms that are already UTF-8.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
+
 _HERE = Path(__file__).resolve().parent
 
 from dotenv import load_dotenv  # noqa: E402
@@ -63,6 +74,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--list", action="store_true",
         help="Affiche les scénarios et modèles disponibles, puis quitte (aucun run lancé).",
     )
+    p.add_argument(
+        "--validation-substudy", action="store_true",
+        help=(
+            "Lance la sous-étude de validation live-vs-synthétique (recommandée par la revue "
+            "méthodologique externe) au lieu d'une campagne normale : pour les 5 scénarios "
+            "live-capables (bgp-001, bgp-002, ospf-001, intf-001, intent-001) x les modèles "
+            "choisis (--models, défaut : tous), interroge réellement les routeurs FRR via "
+            "docker exec/vtysh au lieu du texte synthétique habituel, et compare au score déjà "
+            "enregistré dans les campagnes principales. Ignore --scenarios et --repeats (fixés "
+            "par la sous-étude : les 5 scénarios ci-dessus, 1 run par cellule). Voir "
+            "VALIDATION_SUBSTUDY_GUIDE.md."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -73,6 +97,70 @@ def _validate_ids(requested: list[str], available: list[str], label: str) -> lis
         print(f"{label}s disponibles : {', '.join(available)}")
         return None
     return requested
+
+
+def _run_validation_substudy(args: argparse.Namespace, all_model_ids: list[str], out_dir: Path) -> int:
+    """--validation-substudy branch. Mirrors main()'s campaign flow (validate
+    -> run -> write JSONL -> render + save + print report) but calls
+    eval_harness.run_validation_substudy()/generate_validation_substudy_report_markdown()
+    instead of the main-campaign pair -- same shared-function contract the
+    web UI's /api/eval/validation-substudy endpoint uses, so CLI and UI can
+    never produce different numbers from the same underlying data.
+    """
+    if args.models:
+        model_ids = _validate_ids(
+            [m.strip() for m in args.models.split(",") if m.strip()],
+            all_model_ids, "modèle",
+        )
+        if model_ids is None:
+            return 1
+    else:
+        model_ids = all_model_ids
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    jsonl_path = out_dir / f"validation-substudy-{ts}.jsonl"
+    report_path = out_dir / f"validation-substudy-{ts}-rapport.md"
+
+    scenario_ids = eval_harness.LIVE_CAPABLE_SCENARIOS
+    total = len(scenario_ids) * len(model_ids)
+    print(f"Scénarios live-capables ({len(scenario_ids)}) : {', '.join(scenario_ids)}")
+    print(f"Modèles ({len(model_ids)}) : {', '.join(model_ids)}")
+    print(f"1 run live par cellule -> {total} run(s) au total")
+    print(f"Résultats bruts (JSONL) : {jsonl_path}")
+    print("Démarrage... chaque cellule interroge réellement les routeurs FRR (docker exec/vtysh) "
+          "puis appelle le modèle -- les modèles locaux peuvent être lents.")
+    print()
+
+    def _progress(done: int, tot: int, result: dict) -> None:
+        cmp = result.get("comparison") or {}
+        print(
+            f"  [{done}/{tot}] {result.get('scenario_id')} / {result.get('agent_model_id')} "
+            f"-> {result.get('agent_path')} "
+            f"(synthétique={cmp.get('synthetic_keyword_score')} live={cmp.get('live_keyword_score')} "
+            f"accord={cmp.get('keyword_bucket_agree')})",
+            flush=True,
+        )
+
+    path = eval_harness.run_validation_substudy(
+        model_ids=model_ids, agent=args.agent, output_path=str(jsonl_path), on_progress=_progress,
+    )
+
+    with open(path, encoding="utf-8") as f:
+        results = [json.loads(line) for line in f]
+
+    report = eval_harness.generate_validation_substudy_report_markdown(results)
+    report_path.write_text(report, encoding="utf-8")
+
+    print()
+    print("=" * 70)
+    print("TERMINÉ")
+    print(f"  Résultats bruts (JSONL) : {jsonl_path}")
+    print(f"  Rapport de synthèse (Markdown) : {report_path}")
+    print("=" * 70)
+    print()
+    print(report)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -91,6 +179,16 @@ def main(argv: list[str] | None = None) -> int:
         for mid, entry in llm_client.MODEL_REGISTRY.items():
             print(f"  {mid:<18} ({entry['provider']})")
         return 0
+
+    if args.validation_substudy:
+        if args.scenarios:
+            print("Note : --scenarios est ignoré par --validation-substudy "
+                  f"(scénarios fixés : {', '.join(eval_harness.LIVE_CAPABLE_SCENARIOS)}).")
+        if args.repeats != 3:  # 3 is the parser default -- only warn on an explicit override
+            print("Note : --repeats est ignoré par --validation-substudy (1 run par cellule).")
+        return _run_validation_substudy(args, all_model_ids, out_dir=(
+            Path(args.output_dir) if args.output_dir else _HERE / "campaign_results"
+        ))
 
     if args.scenarios:
         scenario_ids = _validate_ids(
