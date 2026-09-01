@@ -15783,6 +15783,61 @@ def eval_run():
     return jsonify({"job_id": job_id, "total_runs": total})
 
 
+@app.route("/api/eval/validation-substudy", methods=["POST"])
+def eval_validation_substudy():
+    """Async job wrapper around eval_harness.run_validation_substudy() — the
+    live-vs-synthetic methodology sub-study. Same job-dict/polling pattern as
+    /api/eval/run above (and the exact same /api/eval/jobs/<id> GET handles
+    both job kinds), so the UI's polling code needs no special-casing.
+    """
+    data = request.json or {}
+    all_model_ids = list(llm_client.MODEL_REGISTRY.keys())
+
+    model_ids = data.get("models")
+    if model_ids is None:
+        model_ids = all_model_ids
+    agent = data.get("agent") or "ai_command"
+
+    unknown_models = [m for m in model_ids if m not in all_model_ids]
+    if unknown_models:
+        return jsonify({"error": f"Unknown model(s): {', '.join(unknown_models)}"}), 400
+    if not model_ids:
+        return jsonify({"error": "At least one model is required"}), 400
+
+    job_id = _eval_new_job()
+    total = len(eval_harness.LIVE_CAPABLE_SCENARIOS) * len(model_ids)
+
+    def _run():
+        try:
+            def _progress(done, tot, result):
+                cmp = result.get("comparison") or {}
+                _eval_update_job(
+                    job_id, progress=int(done / tot * 100),
+                    message=f"{done}/{tot} — {result.get('scenario_id')} / {result.get('agent_model_id')} "
+                            f"({result.get('agent_path')}, accord mots-clés={cmp.get('keyword_bucket_agree')})",
+                )
+            path = eval_harness.run_validation_substudy(
+                model_ids=model_ids, agent=agent, on_progress=_progress,
+            )
+            with open(path, encoding="utf-8") as f:
+                results = [json.loads(line) for line in f]
+            report_md = eval_harness.generate_validation_substudy_report_markdown(results)
+            stats = eval_harness.validation_substudy_stats(results)
+            _eval_update_job(
+                job_id, status="done", progress=100,
+                message=f"Done — {len(results)} runs",
+                result={
+                    "jsonl_path": path, "report_markdown": report_md, "total_runs": len(results),
+                    "stats": stats,
+                },
+            )
+        except Exception as e:
+            _eval_update_job(job_id, status="error", message=str(e))
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"job_id": job_id, "total_runs": total})
+
+
 if __name__ == "__main__":
     import sys as _sys
     port = int(os.environ.get("DCN_PORT", "5757"))

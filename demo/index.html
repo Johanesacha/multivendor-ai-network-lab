@@ -2993,6 +2993,43 @@ body.noc-wall .icon-rail{display:none}
       </div>
       <div id="evalcmp-report" style="margin-top:8px;flex-shrink:0"></div>
     </div>
+
+    <!-- ── Validation sub-study: live vs synthetic (methodology review) ──
+         Recommended by the external methodology review: for the 5
+         live-capable scenarios, grounds the agent in a real vtysh query
+         against the actual FRR containers instead of the fixed synthetic
+         template, and compares against that (scenario, model)'s
+         already-recorded synthetic score. Same job/poll mechanism as
+         Multi-Model Comparison above (/api/eval/jobs/<id> handles both). ── -->
+    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;flex-shrink:0">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:700;color:#e5c07b">&#x1F52C; Validation live vs synth&#233;tique</span>
+        <span style="font-size:11px;color:var(--muted)">5 sc&#233;narios live-capables &#8212; requ&#234;te vtysh r&#233;elle vs texte synth&#233;tique</span>
+        <div class="spacer"></div>
+        <button class="btn p" onclick="runValidationSubstudy()">&#x25B6; Lancer la validation</button>
+      </div>
+      <div style="display:flex;gap:12px;margin-top:8px;flex-shrink:0;align-items:flex-start">
+        <div class="asec" style="flex:1;max-height:100px;overflow-y:auto">
+          <h4>Mod&#232;les <span style="float:right;cursor:pointer;color:var(--accent)" onclick="valSubSelectAll(true)">tous</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="valSubSelectAll(false)">aucun</span></h4>
+          <div id="valsub-models">Loading&#8230;</div>
+        </div>
+        <div style="flex:2;font-size:10.5px;color:var(--muted);line-height:1.6;padding-top:2px">
+          Claude seul : ~1 minute. Ajouter les mod&#232;les locaux (Ollama) rallonge nettement
+          chaque cellule (qwen2.5/llama3.2 : 2-3 min, phi3.5 : jusqu'&#224; 6-7 min) &#8212;
+          pour une d&#233;mo live, Claude seul est recommand&#233;. Voir VALIDATION_SUBSTUDY_GUIDE.md.
+        </div>
+      </div>
+      <div id="valsub-progress" style="display:none;margin-top:6px;flex-shrink:0">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="spin"></span>
+          <span id="valsub-prog-msg" style="font-size:12px;color:var(--accent)">&#8230;</span>
+        </div>
+        <div style="background:var(--bg3);border-radius:4px;height:4px;margin-top:4px;overflow:hidden">
+          <div id="valsub-prog-fill" style="height:100%;background:var(--accent);width:0%;transition:width .3s"></div>
+        </div>
+      </div>
+      <div id="valsub-report" style="margin-top:8px;flex-shrink:0"></div>
+    </div>
   </div>
 
   <!-- ── Phase 3: Path Trace Tab ──────────────────────────────── -->
@@ -8631,7 +8668,7 @@ document.querySelectorAll('.tab[data-tab^="mv-"]').forEach(tab => {
     </div>
   </div>
 </div>
-<script src="phase3.js?v=r25" defer></script>
+<script src="phase3.js?v=r26" defer></script>
 <!-- Phase 1: nav-rail wiring. Runs after phase3.js so we wrap the final composed switchTab. -->
 <script>
 (function(){

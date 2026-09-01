@@ -444,6 +444,207 @@
   window.runEvalCampaign = runEvalCampaign;
   window.evalCmpSelectAll = evalCmpSelectAll;
 
+  // ── Eval Harness: validation sub-study (live vs synthetic) ──────
+  // Methodology-review add-on next to Multi-Model Comparison above. Calls
+  // /api/eval/validation-substudy (src/app.py -> eval_harness.run_
+  // validation_substudy()) and polls the SAME /api/eval/jobs/<id> endpoint
+  // Multi-Model Comparison uses — one job dict on the server, no special-
+  // casing needed here either beyond a different render function.
+  let _valSubLoaded = false;
+  let _valSubPoll = null;
+
+  async function loadValSubModels() {
+    if (_valSubLoaded) return;
+    _valSubLoaded = true;
+    try {
+      const models = await api('/api/eval/models');
+      const wrap = clear('valsub-models');
+      (models || []).forEach(m => {
+        const label = el('label', { style: 'display:flex;align-items:center;gap:5px;font-size:11px;padding:2px 0;cursor:pointer' });
+        // Claude checked by default (fast, ~1min for all 5 scenarios) — local
+        // Ollama models are unchecked by default so a live demo click can't
+        // accidentally turn into a multi-minute wait; the helper text next to
+        // this list spells out why.
+        const checked = m.provider === 'anthropic' ? 'checked' : undefined;
+        label.appendChild(el('input', { type: 'checkbox', cls: 'valsub-mo-cb', value: m.id, checked }));
+        label.appendChild(document.createTextNode(m.id + ' '));
+        label.appendChild(el('span', { style: 'color:var(--muted)', text: '(' + m.provider + ')' }));
+        wrap.appendChild(label);
+      });
+    } catch (e) {
+      _valSubLoaded = false;
+      const wrap = document.getElementById('valsub-models');
+      if (wrap) wrap.textContent = 'Load error: ' + e.message;
+    }
+  }
+
+  function valSubSelectAll(checked) {
+    document.querySelectorAll('.valsub-mo-cb').forEach(cb => { cb.checked = checked; });
+  }
+
+  function _valSubShowProgress(msg, pct) {
+    const box = document.getElementById('valsub-progress');
+    if (box) box.style.display = 'block';
+    setText('valsub-prog-msg', msg || '…');
+    const fill = document.getElementById('valsub-prog-fill');
+    if (fill) fill.style.width = (pct || 0) + '%';
+  }
+  function _valSubHideProgress() {
+    const box = document.getElementById('valsub-progress');
+    if (box) box.style.display = 'none';
+  }
+  function _valSubShowError(msg) {
+    const reportEl = clear('valsub-report');
+    reportEl.appendChild(el('div', { style: 'color:var(--red);padding:10px' }, '✗ ' + msg));
+  }
+
+  // Same 3-tier score coloring the Multi-Model Comparison tiles/bars use
+  // (>=7 green, 4-6.9 yellow, <4 red) — kept identical so "agreement" reads
+  // the same way visually across both sections of this tab.
+  function _scoreColor(score) {
+    if (score == null) return 'var(--muted)';
+    return score >= 7 ? 'var(--green)' : score >= 4 ? 'var(--yellow)' : 'var(--red)';
+  }
+  function _pctColor(pct) {
+    if (pct == null) return 'var(--muted)';
+    return pct >= 70 ? 'var(--green)' : pct >= 40 ? 'var(--yellow)' : 'var(--red)';
+  }
+  function _agreeIcon(v) {
+    return v === true ? '✅' : v === false ? '❌' : '—';
+  }
+  function _fmtScore(v) {
+    return v == null ? '—' : v;
+  }
+
+  function _valSubRenderReport(result) {
+    const reportEl = clear('valsub-report');
+    const stats = result.stats || {};
+
+    // ── Two global agreement tiles ──
+    const tiles = el('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:10px' });
+    [
+      { label: 'Accord global — mots-clés', pct: stats.global_keyword_agreement_pct },
+      { label: 'Accord global — juge LLM', pct: stats.global_llm_agreement_pct },
+    ].forEach(t => {
+      const c = _pctColor(t.pct);
+      const card = el('div', { style: `background:var(--bg2);border:1px solid ${c}55;border-left:3px solid ${c};border-radius:6px;padding:8px 10px` });
+      card.appendChild(el('div', { style: `font-size:22px;font-weight:800;color:${c}`, text: t.pct != null ? t.pct + '%' : '—' }));
+      card.appendChild(el('div', { style: 'font-size:10px;color:var(--muted);text-transform:uppercase;margin-top:2px', text: t.label }));
+      tiles.appendChild(card);
+    });
+    reportEl.appendChild(tiles);
+
+    const bar = el('div', { style: 'font-size:11px;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap' });
+    bar.appendChild(document.createTextNode('📄 JSONL: '));
+    bar.appendChild(el('code', { style: 'color:var(--accent)', text: result.jsonl_path }));
+    bar.appendChild(document.createTextNode(' · ' + result.total_runs + ' cellule(s)'));
+    reportEl.appendChild(bar);
+
+    // ── Detail table: scenario x model, synthetic vs live, both metrics ──
+    if ((stats.rows || []).length) {
+      const table = el('div', { style: 'display:grid;grid-template-columns:90px 110px 70px 70px 55px 55px 55px 55px;gap:0;background:var(--bg2);border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:11px;margin-bottom:10px' });
+      ['Scénario', 'Modèle', 'Synth. kw', 'Live kw', 'Synth. juge', 'Live juge', 'Accord kw', 'Accord juge'].forEach(h =>
+        table.appendChild(el('div', { style: 'padding:5px 8px;font-size:9.5px;text-transform:uppercase;color:var(--muted);background:var(--bg3)', text: h }))
+      );
+      stats.rows.forEach(r => {
+        table.appendChild(el('div', { style: 'padding:5px 8px;font-family:Consolas,monospace', text: r.scenario_id }));
+        table.appendChild(el('div', { style: 'padding:5px 8px', text: r.model_id }));
+        table.appendChild(el('div', { style: `padding:5px 8px;color:${_scoreColor(r.synthetic_keyword_score)}`, text: _fmtScore(r.synthetic_keyword_score) }));
+        table.appendChild(el('div', { style: `padding:5px 8px;color:${_scoreColor(r.live_keyword_score)};font-weight:700`, text: _fmtScore(r.live_keyword_score) }));
+        table.appendChild(el('div', { style: `padding:5px 8px;color:${_scoreColor(r.synthetic_llm_score)}`, text: _fmtScore(r.synthetic_llm_score) }));
+        table.appendChild(el('div', { style: `padding:5px 8px;color:${_scoreColor(r.live_llm_score)};font-weight:700`, text: _fmtScore(r.live_llm_score) }));
+        table.appendChild(el('div', { style: 'padding:5px 8px;text-align:center', text: _agreeIcon(r.keyword_bucket_agree) }));
+        table.appendChild(el('div', { style: 'padding:5px 8px;text-align:center', text: _agreeIcon(r.llm_bucket_agree) }));
+      });
+      reportEl.appendChild(table);
+    }
+
+    // ── Per-scenario agreement mini-table ──
+    if (stats.by_scenario) {
+      const sTable = el('div', { style: 'display:grid;grid-template-columns:1fr 40px 90px 90px;gap:0;background:var(--bg2);border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:11px;margin-bottom:10px' });
+      ['Scénario', 'n', 'Accord kw', 'Accord juge'].forEach(h =>
+        sTable.appendChild(el('div', { style: 'padding:5px 8px;font-size:9.5px;text-transform:uppercase;color:var(--muted);background:var(--bg3)', text: h }))
+      );
+      Object.entries(stats.by_scenario).forEach(([sid, s]) => {
+        sTable.appendChild(el('div', { style: 'padding:5px 8px', text: sid + ' — ' + (s.title || '') }));
+        sTable.appendChild(el('div', { style: 'padding:5px 8px;color:var(--muted)', text: s.n }));
+        sTable.appendChild(el('div', { style: `padding:5px 8px;color:${_pctColor(s.keyword_agreement_pct)};font-weight:700`, text: s.keyword_agreement_pct != null ? s.keyword_agreement_pct + '%' : '—' }));
+        sTable.appendChild(el('div', { style: `padding:5px 8px;color:${_pctColor(s.llm_agreement_pct)};font-weight:700`, text: s.llm_agreement_pct != null ? s.llm_agreement_pct + '%' : '—' }));
+      });
+      reportEl.appendChild(sTable);
+    }
+
+    // ── Full markdown report stays available (copy / download) — same
+    // textContent-only rule as Multi-Model Comparison's report (embeds
+    // LLM-generated agent-adjacent text; see file banner comment). ──
+    const mdBar = el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:4px' });
+    mdBar.appendChild(el('span', { style: 'font-size:11px;color:var(--muted);font-weight:700', text: '📝 Rapport Markdown complet' }));
+    const copyBtn = el('button', { cls: 'btn', style: 'font-size:10px', text: '📋 Copier' });
+    copyBtn.addEventListener('click', () => navigator.clipboard.writeText(result.report_markdown || ''));
+    const dlBtn = el('button', { cls: 'btn', style: 'font-size:10px', text: '💾 Télécharger .md' });
+    dlBtn.addEventListener('click', () => {
+      const blob = new Blob([result.report_markdown || ''], { type: 'text/markdown' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'validation-substudy-rapport.md';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+    mdBar.appendChild(copyBtn);
+    mdBar.appendChild(dlBtn);
+    reportEl.appendChild(mdBar);
+    const pre = el('pre', { style: 'white-space:pre-wrap;background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:10px;font-size:11.5px;color:var(--text);max-height:420px;overflow-y:auto' });
+    pre.textContent = result.report_markdown;
+    reportEl.appendChild(pre);
+  }
+
+  function _valSubPollJob(jobId) {
+    if (_valSubPoll) clearInterval(_valSubPoll);
+    _valSubPoll = setInterval(async () => {
+      try {
+        const j = await api('/api/eval/jobs/' + jobId);
+        _valSubShowProgress(j.message, j.progress);
+        if (j.status === 'done') {
+          clearInterval(_valSubPoll);
+          _valSubHideProgress();
+          _valSubRenderReport(j.result);
+        } else if (j.status === 'error') {
+          clearInterval(_valSubPoll);
+          _valSubHideProgress();
+          _valSubShowError(j.message);
+        }
+      } catch (e) { /* transient poll failure — next tick retries */ }
+    }, 2000);
+  }
+
+  async function runValidationSubstudy() {
+    const models = Array.from(document.querySelectorAll('.valsub-mo-cb:checked')).map(cb => cb.value);
+    if (!models.length) { _valSubShowError('Sélectionnez au moins un modèle.'); return; }
+
+    clear('valsub-report');
+    _valSubShowProgress('Starting…', 0);
+    try {
+      const r = await fetch(API_BASE + '/api/eval/validation-substudy', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ models }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.error) {
+        _valSubHideProgress();
+        _valSubShowError(j.error || ('HTTP ' + r.status));
+        return;
+      }
+      _valSubPollJob(j.job_id);
+    } catch (e) {
+      _valSubHideProgress();
+      _valSubShowError(e.message);
+    }
+  }
+
+  window.runValidationSubstudy = runValidationSubstudy;
+  window.valSubSelectAll = valSubSelectAll;
+  window.loadValSubModels = loadValSubModels;
+
   // ── Path Trace ────────────────────────────────────────────────
   let _pathLoaded = false;
   async function loadPathDevices() {
@@ -679,7 +880,7 @@
     Object.assign(window.MV_TAB_INIT, {
       'mv-orchestrator': () => {},
       'mv-intent': loadIntent,
-      'mv-eval': () => { loadEvalScenarios(); loadEvalCampaignData(); },
+      'mv-eval': () => { loadEvalScenarios(); loadEvalCampaignData(); loadValSubModels(); },
       'mv-path': loadPathDevices,
       'mv-gait': loadGait,
     });
