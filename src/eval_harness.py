@@ -1168,15 +1168,19 @@ def validation_substudy_stats(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def generate_validation_substudy_report_markdown(
-    results: list[dict[str, Any]], title: str = "Sous-étude de validation — live vs synthétique"
+    results: list[dict[str, Any]], title: str = "Validation Sub-Study — Live vs Synthetic"
 ) -> str:
     """
-    Human-readable French report for run_validation_substudy() output — same
+    Human-readable English report for run_validation_substudy() output — same
     shared-generator pattern as generate_report_markdown() (CLI and web UI
     both call this one function, never two separate report implementations).
+
+    English (unlike generate_report_markdown()'s French, which predates this
+    sub-study and stays untouched) because this report renders live inside
+    the Eval Harness panel a demo audience sees on screen.
     """
     if not results:
-        return f"# {title}\n\nAucun run à rapporter.\n"
+        return f"# {title}\n\nNo runs to report.\n"
 
     stats = validation_substudy_stats(results)
     kw_pct = stats["global_keyword_agreement_pct"]
@@ -1184,25 +1188,25 @@ def generate_validation_substudy_report_markdown(
     lines = [
         f"# {title}",
         "",
-        f"**Date :** {time.strftime('%Y-%m-%d %H:%M:%S')}  ",
-        f"**Cellules (scénario × modèle) :** {stats['total_cells']}  ",
-        f"**Taux d'accord global (score mots-clés) :** {kw_pct if kw_pct is not None else '—'}%  ",
-        f"**Taux d'accord global (score juge LLM) :** {llm_pct if llm_pct is not None else '—'}%",
+        f"**Date:** {time.strftime('%Y-%m-%d %H:%M:%S')}  ",
+        f"**Cells (scenario × model):** {stats['total_cells']}  ",
+        f"**Global agreement rate (keyword score):** {kw_pct if kw_pct is not None else '—'}%  ",
+        f"**Global agreement rate (LLM judge score):** {llm_pct if llm_pct is not None else '—'}%",
         "",
-        "## Méthodologie (résumé)",
+        "## Methodology (summary)",
         "",
-        "Pour chaque paire (scénario, modèle), le score **synthétique** est relu tel quel depuis "
-        "les campagnes principales déjà enregistrées (`campaign_results/campaign-*.jsonl`) — jamais "
-        "rejoué. Le score **live** vient d'un run neuf où le symptôme envoyé à l'agent est construit "
-        "à partir d'une commande vtysh réellement exécutée sur le routeur FRR concerné "
-        "(`docker exec ... vtysh -c ...`), au lieu du texte fixe habituel. Un **accord** signifie que "
-        "synthétique et live tombent dans le même palier de score : 🟢 bon (≥7) · 🟡 moyen (4-6.9) · "
-        "🔴 faible (<4) — les mêmes seuils que les couleurs utilisées ailleurs dans l'UI.",
+        "For each (scenario, model) pair, the **synthetic** score is read back as-is from the "
+        "already-recorded main campaigns (`campaign_results/campaign-*.jsonl`) — never re-run. "
+        "The **live** score comes from a fresh run where the symptom handed to the agent is built "
+        "from a vtysh command actually executed against the relevant FRR router "
+        "(`docker exec ... vtysh -c ...`) instead of the usual fixed text. **Agreement** means "
+        "synthetic and live land in the same score tier: 🟢 good (≥7) · 🟡 medium (4-6.9) · "
+        "🔴 poor (<4) — the same thresholds used for score colors elsewhere in the UI.",
         "",
-        "## Détail par scénario × modèle",
+        "## Detail by scenario × model",
         "",
-        "| Scénario | Modèle | Synthétique (mots-clés) | Live (mots-clés) | Δ | Synthétique (juge) | "
-        "Live (juge) | Δ | Accord mots-clés | Accord juge |",
+        "| Scenario | Model | Synthetic (keyword) | Live (keyword) | Δ | Synthetic (judge) | "
+        "Live (judge) | Δ | Keyword agreement | Judge agreement |",
         "|---|---|---|---|---|---|---|---|---|---|",
     ]
 
@@ -1222,8 +1226,8 @@ def generate_validation_substudy_report_markdown(
         )
 
     lines += [
-        "", "## Taux d'accord par scénario", "",
-        "| Scénario | n | Accord mots-clés | Accord juge |", "|---|---|---|---|",
+        "", "## Agreement rate by scenario", "",
+        "| Scenario | n | Keyword agreement | Judge agreement |", "|---|---|---|---|",
     ]
     for sid, s in stats["by_scenario"].items():
         kw = f"{s['keyword_agreement_pct']}%" if s["keyword_agreement_pct"] is not None else "—"
@@ -1233,19 +1237,17 @@ def generate_validation_substudy_report_markdown(
     stub_rows = [r for r in results if r.get("agent_path") == "stub"]
     lines += [
         "", "## Limitations", "",
-        "- **1 seul run live par cellule** (spot-check ciblé, pas une nouvelle campagne à 3 "
-        "répétitions) — une cellule en désaccord peut refléter la variance normale d'un LLM autant "
-        "qu'un vrai écart synthétique/live.",
-        "- Le **score juge (LLM)** est souvent absent côté synthétique (valeur non numérique renvoyée "
-        "par le juge sur une fraction significative des runs historiques — limitation déjà documentée "
-        "dans `aggregate_results()`) ; le taux d'accord **mots-clés** est plus complet et plus fiable "
-        "que le taux d'accord juge pour cette raison.",
-        f"- **{len(stub_rows)}** run(s) live sont en fait des stubs (modèle injoignable) — exclus de "
-        "l'interprétation, comptés séparément.",
-        "- Le lab étant actuellement sain (aucun de ces 5 scénarios n'est réellement injecté), un "
-        "désaccord peut aussi signifier que le modèle a correctement reconnu l'absence de panne en "
-        "mode live là où le texte synthétique lui décrivait une panne fictive — ce n'est pas "
-        "nécessairement une erreur du modèle.",
+        "- **Only 1 live run per cell** (a targeted spot-check, not a new 3-repeat campaign) — a "
+        "disagreeing cell can reflect ordinary LLM variance just as much as a real synthetic/live gap.",
+        "- The **judge (LLM) score** is often missing on the synthetic side (the judge returns a "
+        "non-numeric value on a meaningful fraction of historical runs — a limitation already "
+        "documented in `aggregate_results()`); the **keyword** agreement rate is more complete and "
+        "more reliable for this reason.",
+        f"- **{len(stub_rows)}** live run(s) are actually stubs (model unreachable) — excluded from "
+        "interpretation, counted separately.",
+        "- Since this lab is currently healthy (none of these 5 scenarios is actually injected), a "
+        "disagreement can also mean the model correctly recognized, in live mode, that there is no "
+        "fault — where the synthetic text described one — which is not necessarily a model error.",
     ]
 
     return "\n".join(lines) + "\n"

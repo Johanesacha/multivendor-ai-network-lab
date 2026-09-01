@@ -85,17 +85,21 @@ lisible, même contenu que ce qui s'affiche à l'écran).
 2. Ouvre `http://127.0.0.1:5757/demo/index.html`.
 3. Sélectionne n'importe quel appareil dans la liste de gauche, puis
    l'onglet **🧪 Eval Harness**.
-4. Fais défiler jusqu'à la section **🔬 Validation live vs synthétique**,
-   juste sous le panneau Multi-Model Comparison.
+4. Fais défiler jusqu'à la section **🔬 Live vs Synthetic Validation**,
+   juste sous le panneau Multi-Model Comparison. Toute l'interface de ce
+   panneau (comme le reste de l'Eval Harness) est en anglais ; ce guide
+   reste en français pour les explications, mais reprend les libellés
+   anglais exacts entre guillemets.
 5. Coche les modèles voulus (Claude est coché par défaut — voir la note de
    durée ci-dessous avant de cocher les modèles locaux pour une démo en
-   direct), puis clique **▶ Lancer la validation**.
+   direct), puis clique **▶ Run Validation**.
 6. Le résultat s'affiche progressivement : deux tuiles de taux d'accord
-   global (mots-clés / juge, colorées vert ≥70% · orange 40-69% · rouge
-   <40%), un tableau détaillé par scénario × modèle (scores synthétique vs
-   live, colorés par palier, avec ✅/❌ d'accord), un tableau d'accord par
-   scénario, puis le rapport Markdown complet avec **📋 Copier** et
-   **💾 Télécharger .md**.
+   global ("Global agreement — keyword" / "Global agreement — LLM judge",
+   colorées vert ≥70% · orange 40-69% · rouge <40%), un tableau détaillé par
+   scénario × modèle (scores synthétique vs live, colorés par palier, avec
+   ✅/❌ d'accord), un tableau d'accord par scénario, puis le rapport
+   Markdown complet (en anglais lui aussi) avec **📋 Copy** et
+   **💾 Download .md**.
 
 ⚠️ Si le clic renvoie une erreur "unauthorized" : même étape que pour le
 reste de l'Eval Harness — `localStorage.setItem('MVLAB_API_KEY', '<clé de

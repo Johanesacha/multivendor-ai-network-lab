@@ -330,7 +330,7 @@
         card.appendChild(el('div', { style: 'font-size:11px;font-weight:700;color:var(--text)', text: s.model_id }));
         card.appendChild(el('div', { style: 'font-size:9px;color:var(--muted);text-transform:uppercase', text: s.provider }));
         card.appendChild(el('div', { style: `font-size:24px;font-weight:800;color:${color};margin-top:4px`, text: score != null ? score.toFixed(1) : '—' }));
-        card.appendChild(el('div', { style: 'font-size:9px;color:var(--muted)', text: s.llm_score != null ? 'score juge /10' : 'score mots-clés /10' }));
+        card.appendChild(el('div', { style: 'font-size:9px;color:var(--muted)', text: s.llm_score != null ? 'judge score /10' : 'keyword score /10' }));
         const meta = el('div', { style: 'font-size:10px;color:var(--muted);margin-top:6px;display:flex;justify-content:space-between;gap:6px' });
         meta.appendChild(el('span', { text: s.avg_latency_s != null ? s.avg_latency_s + 's' : '—' }));
         meta.appendChild(el('span', { text: '$' + s.total_cost_usd.toFixed(5) }));
@@ -342,7 +342,7 @@
 
       const table = el('div', { style: 'background:var(--bg2);border:1px solid var(--border);border-radius:6px;overflow:hidden;margin-bottom:10px;font-size:11px' });
       const head = el('div', { style: 'display:grid;grid-template-columns:1fr 75px 75px 65px 80px 1.3fr;background:var(--bg3)' });
-      ['Modèle', 'Mots-clés /10', 'Juge /10', 'Latence', 'Coût', 'Comparaison (score juge)'].forEach(h =>
+      ['Model', 'Keyword /10', 'Judge /10', 'Latency', 'Cost', 'Comparison (judge score)'].forEach(h =>
         head.appendChild(el('div', { style: 'padding:5px 8px;font-size:9px;text-transform:uppercase;color:var(--muted)', text: h }))
       );
       table.appendChild(head);
@@ -371,10 +371,10 @@
     // replace it. textContent, never innerHTML: the report embeds
     // LLM-generated agent output (see file banner comment at the top). ──
     const mdBar = el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:4px' });
-    mdBar.appendChild(el('span', { style: 'font-size:11px;color:var(--muted);font-weight:700', text: '📝 Rapport Markdown complet' }));
-    const copyBtn = el('button', { cls: 'btn', style: 'font-size:10px', text: '📋 Copier' });
+    mdBar.appendChild(el('span', { style: 'font-size:11px;color:var(--muted);font-weight:700', text: '📝 Full Markdown report' }));
+    const copyBtn = el('button', { cls: 'btn', style: 'font-size:10px', text: '📋 Copy' });
     copyBtn.addEventListener('click', () => navigator.clipboard.writeText(result.report_markdown || ''));
-    const dlBtn = el('button', { cls: 'btn', style: 'font-size:10px', text: '💾 Télécharger .md' });
+    const dlBtn = el('button', { cls: 'btn', style: 'font-size:10px', text: '💾 Download .md' });
     dlBtn.addEventListener('click', () => {
       const blob = new Blob([result.report_markdown || ''], { type: 'text/markdown' });
       const a = document.createElement('a');
@@ -523,8 +523,8 @@
     // ── Two global agreement tiles ──
     const tiles = el('div', { style: 'display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:10px' });
     [
-      { label: 'Accord global — mots-clés', pct: stats.global_keyword_agreement_pct },
-      { label: 'Accord global — juge LLM', pct: stats.global_llm_agreement_pct },
+      { label: 'Global agreement — keyword', pct: stats.global_keyword_agreement_pct },
+      { label: 'Global agreement — LLM judge', pct: stats.global_llm_agreement_pct },
     ].forEach(t => {
       const c = _pctColor(t.pct);
       const card = el('div', { style: `background:var(--bg2);border:1px solid ${c}55;border-left:3px solid ${c};border-radius:6px;padding:8px 10px` });
@@ -537,13 +537,13 @@
     const bar = el('div', { style: 'font-size:11px;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap' });
     bar.appendChild(document.createTextNode('📄 JSONL: '));
     bar.appendChild(el('code', { style: 'color:var(--accent)', text: result.jsonl_path }));
-    bar.appendChild(document.createTextNode(' · ' + result.total_runs + ' cellule(s)'));
+    bar.appendChild(document.createTextNode(' · ' + result.total_runs + ' cell(s)'));
     reportEl.appendChild(bar);
 
     // ── Detail table: scenario x model, synthetic vs live, both metrics ──
     if ((stats.rows || []).length) {
       const table = el('div', { style: 'display:grid;grid-template-columns:90px 110px 70px 70px 55px 55px 55px 55px;gap:0;background:var(--bg2);border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:11px;margin-bottom:10px' });
-      ['Scénario', 'Modèle', 'Synth. kw', 'Live kw', 'Synth. juge', 'Live juge', 'Accord kw', 'Accord juge'].forEach(h =>
+      ['Scenario', 'Model', 'Synth. kw', 'Live kw', 'Synth. judge', 'Live judge', 'Agree kw', 'Agree judge'].forEach(h =>
         table.appendChild(el('div', { style: 'padding:5px 8px;font-size:9.5px;text-transform:uppercase;color:var(--muted);background:var(--bg3)', text: h }))
       );
       stats.rows.forEach(r => {
@@ -562,7 +562,7 @@
     // ── Per-scenario agreement mini-table ──
     if (stats.by_scenario) {
       const sTable = el('div', { style: 'display:grid;grid-template-columns:1fr 40px 90px 90px;gap:0;background:var(--bg2);border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:11px;margin-bottom:10px' });
-      ['Scénario', 'n', 'Accord kw', 'Accord juge'].forEach(h =>
+      ['Scenario', 'n', 'Agree kw', 'Agree judge'].forEach(h =>
         sTable.appendChild(el('div', { style: 'padding:5px 8px;font-size:9.5px;text-transform:uppercase;color:var(--muted);background:var(--bg3)', text: h }))
       );
       Object.entries(stats.by_scenario).forEach(([sid, s]) => {
@@ -578,15 +578,15 @@
     // textContent-only rule as Multi-Model Comparison's report (embeds
     // LLM-generated agent-adjacent text; see file banner comment). ──
     const mdBar = el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:4px' });
-    mdBar.appendChild(el('span', { style: 'font-size:11px;color:var(--muted);font-weight:700', text: '📝 Rapport Markdown complet' }));
-    const copyBtn = el('button', { cls: 'btn', style: 'font-size:10px', text: '📋 Copier' });
+    mdBar.appendChild(el('span', { style: 'font-size:11px;color:var(--muted);font-weight:700', text: '📝 Full Markdown report' }));
+    const copyBtn = el('button', { cls: 'btn', style: 'font-size:10px', text: '📋 Copy' });
     copyBtn.addEventListener('click', () => navigator.clipboard.writeText(result.report_markdown || ''));
-    const dlBtn = el('button', { cls: 'btn', style: 'font-size:10px', text: '💾 Télécharger .md' });
+    const dlBtn = el('button', { cls: 'btn', style: 'font-size:10px', text: '💾 Download .md' });
     dlBtn.addEventListener('click', () => {
       const blob = new Blob([result.report_markdown || ''], { type: 'text/markdown' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = 'validation-substudy-rapport.md';
+      a.download = 'validation-substudy-report.md';
       a.click();
       URL.revokeObjectURL(a.href);
     });
@@ -619,7 +619,7 @@
 
   async function runValidationSubstudy() {
     const models = Array.from(document.querySelectorAll('.valsub-mo-cb:checked')).map(cb => cb.value);
-    if (!models.length) { _valSubShowError('Sélectionnez au moins un modèle.'); return; }
+    if (!models.length) { _valSubShowError('Select at least one model.'); return; }
 
     clear('valsub-report');
     _valSubShowProgress('Starting…', 0);

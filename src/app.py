@@ -15814,7 +15814,7 @@ def eval_validation_substudy():
                 _eval_update_job(
                     job_id, progress=int(done / tot * 100),
                     message=f"{done}/{tot} — {result.get('scenario_id')} / {result.get('agent_model_id')} "
-                            f"({result.get('agent_path')}, accord mots-clés={cmp.get('keyword_bucket_agree')})",
+                            f"({result.get('agent_path')}, keyword agreement={cmp.get('keyword_bucket_agree')})",
                 )
             path = eval_harness.run_validation_substudy(
                 model_ids=model_ids, agent=agent, on_progress=_progress,

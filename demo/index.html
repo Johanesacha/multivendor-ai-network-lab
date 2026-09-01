@@ -3003,21 +3003,19 @@ body.noc-wall .icon-rail{display:none}
          Multi-Model Comparison above (/api/eval/jobs/<id> handles both). ── -->
     <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;flex-shrink:0">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <span style="font-size:13px;font-weight:700;color:#e5c07b">&#x1F52C; Validation live vs synth&#233;tique</span>
-        <span style="font-size:11px;color:var(--muted)">5 sc&#233;narios live-capables &#8212; requ&#234;te vtysh r&#233;elle vs texte synth&#233;tique</span>
+        <span style="font-size:13px;font-weight:700;color:#e5c07b">&#x1F52C; Live vs Synthetic Validation</span>
+        <span style="font-size:11px;color:var(--muted)">5 live-capable scenarios &#8212; real vtysh query vs synthetic text</span>
         <div class="spacer"></div>
-        <button class="btn p" onclick="runValidationSubstudy()">&#x25B6; Lancer la validation</button>
+        <button class="btn p" onclick="runValidationSubstudy()">&#x25B6; Run Validation</button>
       </div>
       <div style="display:flex;gap:12px;margin-top:8px;flex-shrink:0;align-items:flex-start">
         <div class="asec" style="flex:1;max-height:100px;overflow-y:auto">
-          <h4>Mod&#232;les <span style="float:right;cursor:pointer;color:var(--accent)" onclick="valSubSelectAll(true)">tous</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="valSubSelectAll(false)">aucun</span></h4>
+          <h4>Models <span style="float:right;cursor:pointer;color:var(--accent)" onclick="valSubSelectAll(true)">all</span> <span style="float:right;cursor:pointer;color:var(--muted);margin-right:8px" onclick="valSubSelectAll(false)">none</span></h4>
           <div id="valsub-models">Loading&#8230;</div>
         </div>
-        <div style="flex:2;font-size:10.5px;color:var(--muted);line-height:1.6;padding-top:2px">
-          Claude seul (5 sc&#233;narios) : ~45 secondes, mesur&#233;. Ajouter les mod&#232;les locaux
-          (Ollama) rallonge fortement chaque run (qwen2.5 : ~10 min mesur&#233;, llama3.2 : ~12-15 min
-          estim&#233;, phi3.5 : ~25-35 min estim&#233;, pour les 5 sc&#233;narios de chaque mod&#232;le) &#8212;
-          pour une d&#233;mo live, Claude seul est recommand&#233;. Voir VALIDATION_SUBSTUDY_GUIDE.md.
+        <div style="flex:2;font-size:11px;color:var(--muted);padding-top:4px;display:flex;align-items:center;gap:5px">
+          <span>Claude: ~1 min &#183; local models: several minutes each</span>
+          <span style="cursor:help;color:var(--accent);border:1px solid var(--accent);border-radius:50%;width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0" title="Measured on the reference machine, for the 5 scenarios: claude-haiku-4-5 ~45s. qwen2.5:3b ~10min (measured). llama3.2:3b ~12-15min and phi3.5:3.8b ~25-35min (both estimated from the main campaign's average latency). Pick Claude alone for a live demo; run local models ahead of time. See VALIDATION_SUBSTUDY_GUIDE.md.">&#9432;</span>
         </div>
       </div>
       <div id="valsub-progress" style="display:none;margin-top:6px;flex-shrink:0">
@@ -8669,7 +8667,7 @@ document.querySelectorAll('.tab[data-tab^="mv-"]').forEach(tab => {
     </div>
   </div>
 </div>
-<script src="phase3.js?v=r26" defer></script>
+<script src="phase3.js?v=r27" defer></script>
 <!-- Phase 1: nav-rail wiring. Runs after phase3.js so we wrap the final composed switchTab. -->
 <script>
 (function(){
