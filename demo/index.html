@@ -1717,6 +1717,12 @@ body.noc-wall .icon-rail{display:none}
         <span id="topo-mode-badge" class="tag-info">Live from SSH</span>
         <button class="btn g" onclick="buildLiveTopology()" id="topo-build-btn">&#x25B6; Build Live Topology</button>
         <button class="btn" onclick="buildLiveTopology()" style="display:none" id="topo-refresh-btn">&#x21BB; Refresh</button>
+        <!-- Scope filter: the thesis covers the 26-device backbone; Lab B
+             (containerlab Clos-EVPN, 15 nodes, never deployed) is opt-in. -->
+        <span style="display:inline-flex;border:1px solid var(--border);border-radius:5px;overflow:hidden" title="Backbone = 26-device DCN (thesis scope). +Lab B adds the 15-node containerlab fabric.">
+          <button class="btn p" id="topo-scope-core" onclick="setTopoScope('core')" style="border:0;border-radius:0">Backbone (26)</button>
+          <button class="btn" id="topo-scope-all" onclick="setTopoScope('all')" style="border:0;border-radius:0;border-left:1px solid var(--border)">+ Lab B (41)</button>
+        </span>
         <!-- Audit #22: visible "Last fetched" timestamp so operators know if they're looking at stale data -->
         <span class="topo-last-updated" id="topo-last-updated" title="Last fetched">never</span>
         <button class="btn" onclick="remediate('status')" style="border-color:var(--teal);color:var(--teal)">&#x1F4CB; Status</button>
@@ -3410,6 +3416,7 @@ async function init(){
         h: window.normalizeHost(raw), ip: d.ip, port: d.port || 22,
         site: d.site, role: d.role, dtype: d.os||d.dtype,
         vendor: d.vendor, model: d.model||d.os, live: d.live||false,
+        fabric: d.fabric || '',
       };
     });
     DEVICES.length = 0;
@@ -4125,6 +4132,28 @@ function mockNapalmErrors(){
 }
 
 /* ── Live BGP Topology ────────────────────────────────────────── */
+
+/* Scope filter for the Topology view.
+   'core' = the 26-device DCN backbone the thesis is about (10 live FRR
+            routers + 16 static Juniper/Arista configs, 5 regions).
+   'all'  = also include the 15-node containerlab Clos-EVPN fabric (Lab B),
+            which shares no BGP peering with the backbone and was never
+            deployed. Default is 'core' so the figure + its export match
+            the thesis perimeter. */
+let topoScope = 'core';
+function topoIsLabB(d){
+  return d && (d.fabric === 'clos-evpn' || d.site === 'CLAB-DC1'
+               || /^(spine|leaf|host)\d+$/.test(d.h || d.hostname || ''));
+}
+function topoInScope(d){ return topoScope === 'all' || !topoIsLabB(d); }
+function setTopoScope(scope){
+  if (scope === topoScope) return;
+  topoScope = scope;
+  document.getElementById('topo-scope-core')?.classList.toggle('p', scope === 'core');
+  document.getElementById('topo-scope-all')?.classList.toggle('p', scope === 'all');
+  if (_topoBuilt) buildLiveTopology();
+}
+
 async function buildLiveTopology(){
   document.getElementById('topo-status').textContent = 'Fetching BGP data from lab devices…';
   document.getElementById('topo-build-btn').disabled = true;
@@ -4168,9 +4197,11 @@ async function buildLiveTopology(){
   };
   const SITE_COLORS = {'DE-FRA':'58a6ff','UK-LON':'3fb950','NL-AMS':'f0883e','EU-CDG':'e5c07b','US-NYC':'a78bfa'};
 
-  // Use DEVICES to know all nodes even if no BGP
-  const nodes = DEVICES.map(d => ({
-    id: d.h, site: d.site, role: d.role, dtype: d.dtype,
+  // Use DEVICES to know all nodes even if no BGP.
+  // Scope filter: exclude the containerlab Clos-EVPN fabric (Lab B) unless
+  // the user opts in — the thesis figure covers the 26-device backbone.
+  const nodes = DEVICES.filter(topoInScope).map(d => ({
+    id: d.h, site: d.site, role: d.role, dtype: d.dtype, vendor: d.vendor,
     pos: POS[d.h] || {x:300, y:250, site:d.site},
     as: null, rid: null
   }));
@@ -4238,8 +4269,11 @@ async function buildLiveTopology(){
   };
   nodes.forEach(n => { n.as = asMap[n.id] || null; });
 
-  // Start: all links up (green) — live data will update individual states
-  let links = STATIC_LINKS.map(l => ({...l, up:true}));
+  // Start: all links up (green) — live data will update individual states.
+  // Keep only links whose endpoints are both in scope.
+  const nodeIds = new Set(nodes.map(n => n.id));
+  let links = STATIC_LINKS.filter(l => nodeIds.has(l.source) && nodeIds.has(l.target))
+                          .map(l => ({...l, up:true}));
 
   if (LIVE) {
     // Try to get live up/down state from telemetry, but always keep static topology
