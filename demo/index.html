@@ -219,6 +219,13 @@ canvas.spark{flex:1;height:32px;}
 .bf-issue.warn{background:rgba(210,153,34,.08);border-left:3px solid var(--yellow);}
 .bf-issue.ok{background:rgba(63,185,80,.08);border-left:3px solid var(--green);}
 .scroll-area{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;min-height:0;}
+/* Root fix (device panel content clipped, no scroll): .scroll-area is a flex
+   column, so a stacked child (e.g. the GAIT / inventory grid, which also carries
+   its own overflow:hidden) is shrunk by default flex-shrink:1 to the container
+   height and then self-clips its overflowing rows — leaving the .scroll-area
+   with nothing to scroll. Pin every direct child so it keeps its natural height
+   and the .scroll-area scrolls instead. */
+.scroll-area > *{flex-shrink:0;}
 .overview-kpi{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 16px;min-width:88px;display:flex;flex-direction:column;align-items:center;justify-content:center;}
 .kpi-num{font-size:22px;font-weight:700;color:var(--accent);line-height:1.1;}
 .kpi-lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-top:3px;}
