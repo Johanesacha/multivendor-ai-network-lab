@@ -2965,7 +2965,13 @@ body.noc-wall .icon-rail{display:none}
       <div class="stat-card"><div class="sv" id="eval-llm" style="color:var(--accent)">—</div><div class="sl">LLM Judge /10</div></div>
       <div class="stat-card"><div class="sv" id="eval-ms" style="color:var(--purple)">—</div><div class="sl">Latency ms</div></div>
     </div>
-    <div class="scroll-area" id="eval-out"></div>
+    <!-- Root fix: #eval-out used to be the sole flex:1 scroll region, but this
+         tab also stacks the Multi-Model Comparison + Live-vs-Synthetic blocks
+         as flex-shrink:0 siblings AFTER it — so a tall comparison table pushed
+         them past the .tp{overflow:hidden} edge with no scroll. Wrap the whole
+         lower half in one .scroll-area and let #eval-out size to content. -->
+    <div class="scroll-area" id="eval-lower">
+    <div id="eval-out"></div>
 
     <!-- ── Multi-model campaign (additive — the single-run tester above still
          tests one scenario/agent at a fixed model; this compares several
@@ -3036,6 +3042,7 @@ body.noc-wall .icon-rail{display:none}
       </div>
       <div id="valsub-report" style="margin-top:8px;flex-shrink:0"></div>
     </div>
+    </div><!-- /#eval-lower -->
   </div>
 
   <!-- ── Phase 3: Path Trace Tab ──────────────────────────────── -->
