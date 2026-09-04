@@ -1723,7 +1723,8 @@ body.noc-wall .icon-rail{display:none}
           <button class="btn p" id="topo-scope-core" onclick="setTopoScope('core')" style="border:0;border-radius:0">Backbone (26)</button>
           <button class="btn" id="topo-scope-all" onclick="setTopoScope('all')" style="border:0;border-radius:0;border-left:1px solid var(--border)">+ Lab B (41)</button>
         </span>
-        <button class="btn" id="topo-export-svg" onclick="exportTopoSVG()" title="Download this view as a vector SVG (for print / thesis figures)">&#x2B07; SVG</button>
+        <button class="btn" id="topo-export-svg" onclick="exportTopoSVG('dark')" title="Download this view as a vector SVG, dark background (matches the screen)">&#x2B07; SVG</button>
+        <button class="btn" id="topo-export-svg-print" onclick="exportTopoSVG('print')" title="Download a print-ready SVG: white background, AA-contrast colours, degraded links dashed — legible in black &amp; white">&#x2B07; SVG (print)</button>
         <!-- Audit #22: visible "Last fetched" timestamp so operators know if they're looking at stale data -->
         <span class="topo-last-updated" id="topo-last-updated" title="Last fetched">never</span>
         <button class="btn" onclick="remediate('status')" style="border-color:var(--teal);color:var(--teal)">&#x1F4CB; Status</button>
@@ -4155,16 +4156,31 @@ function setTopoScope(scope){
   if (_topoBuilt) buildLiveTopology();
 }
 
-/* Export the topology exactly as shown as a standalone vector SVG —
-   lossless at any print size, respects the active scope filter. */
-function exportTopoSVG(){
-  const src = document.querySelector('#tab-topo svg');
+/* Cache of the inputs behind the last on-screen render (set at the end of
+   buildLiveTopology). Lets exportTopoSVG() re-render in a different theme
+   — e.g. print — from the exact same data, without a fresh BGP fetch. */
+let _topoLastRender = null;
+
+/* Export the topology as a standalone vector SVG — lossless at any print
+   size, respects the active scope filter.
+   theme 'dark'  (default) = exactly what's on screen.
+   theme 'print' = white background, AA-contrast colours, status distinguished
+                   by dash pattern too (not colour alone) — legible printed
+                   in black & white. */
+function exportTopoSVG(theme){
+  theme = theme === 'print' ? 'print' : 'dark';
   const statusEl = document.getElementById('topo-status');
-  if (!src){
+  if (!_topoLastRender){
     if (statusEl) statusEl.textContent = 'Build the topology first, then export.';
     return;
   }
-  const svg = src.cloneNode(true);
+  // Re-render fresh from the cached data (rather than cloning the live DOM)
+  // so the print theme doesn't have to fight dark-mode-only styling, and
+  // both exports stay byte-identical to what renderTopoSVG would draw.
+  const holder = document.createElement('div');
+  renderTopoSVG(holder, _topoLastRender.nodes, _topoLastRender.links,
+                {..._topoLastRender.opts, theme});
+  const svg = holder.querySelector('svg');
   // give the file an intrinsic size from the viewBox; drop the fit-to-panel
   // style but keep the font stack (it lived in the style attribute)
   const vb = (svg.getAttribute('viewBox') || '0 0 1400 900').split(/\s+/).map(Number);
@@ -4173,8 +4189,7 @@ function exportTopoSVG(){
   svg.setAttribute('height', Math.round(vb[3]));
   svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
   svg.setAttribute('font-family', "'Segoe UI',Helvetica,Arial,sans-serif");
-  // strip live-only decoration (health halos, focus outlines, pointer cursor)
-  svg.querySelectorAll('[class*="topo-node-"]').forEach(n => n.removeAttribute('class'));
+  // strip interactive-only affordances (pointer cursor, focus outline)
   svg.querySelectorAll('[style*="cursor"]').forEach(n => n.removeAttribute('style'));
   svg.querySelectorAll('[tabindex]').forEach(n => n.removeAttribute('tabindex'));
 
@@ -4182,7 +4197,8 @@ function exportTopoSVG(){
   const blob = new Blob([xml], {type: 'image/svg+xml;charset=utf-8'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `bgp-topology-${topoScope === 'all' ? '41-with-labB' : '26-backbone'}-${new Date().toISOString().slice(0,10)}.svg`;
+  const scopeTag = _topoLastRender.opts.scope === 'all' ? '41-with-labB' : '26-backbone';
+  a.download = `bgp-topology-${scopeTag}-${theme}-${new Date().toISOString().slice(0,10)}.svg`;
   document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   if (statusEl) statusEl.textContent = `Exported ${a.download}`;
@@ -4363,7 +4379,11 @@ async function buildLiveTopology(){
     document.getElementById('topo-mode-badge').className = 'tag-info';
   }
 
-  renderTopoSVG(canvas, nodes, links, {siteColors:SITE_COLORS, scope:topoScope, live:LIVE});
+  const renderOpts = {siteColors:SITE_COLORS, scope:topoScope, live:LIVE};
+  renderTopoSVG(canvas, nodes, links, renderOpts);
+  // cache the inputs so exportTopoSVG() can re-render in another theme
+  // (e.g. print) without re-fetching BGP data.
+  _topoLastRender = {nodes, links, opts:renderOpts};
   document.getElementById('topo-build-btn').disabled = false;
   document.getElementById('topo-build-btn').style.display = 'none';
   document.getElementById('topo-refresh-btn').style.display = '';
@@ -4376,9 +4396,44 @@ async function buildLiveTopology(){
    the anchor, so a corridor is always a single clean arc that never enters
    a third region. Layout is hand-computed (see POS table) — no physics,
    reproducible, print-ready. */
+// Colour palettes for the two export themes. 'dark' matches the on-screen
+// panel exactly (unchanged values). 'print' swaps in a white background and
+// AA-contrast (WCAG-ish, GitHub-light-derived) colours so nothing renders as
+// pale-grey-on-white, and marks down/partial corridors with a dash pattern
+// (not colour alone) so status survives a black & white printout.
+const TOPO_THEME = {
+  dark: {
+    bg:'#0d1117', title:'#e6edf3', muted:'#8b949e', hostname:'#e6edf3',
+    nodeFill:'#161b22', pillFill:'#0d1117',
+    corridorUp:'#4493f8', corridorPartial:'#f0883e', corridorDown:'#f85149', corridorUpLabel:'#79c0ff',
+    wanRing:'#4493f8', wanRingOpacity:0.8, wanRingWidth:1.6,
+    trunk:'#4493f8', trunkOpacity:0.55, trunkWidth:2,
+    plainLink:'#8b949e', plainLinkOpacity:0.6, plainLinkWidth:1.5,
+    fabric:'#a78bfa', fabricOpacity:0.4,
+    downBad:'#f0883e', glow:true, siteColors:null,
+    role:{core:'58a6ff', edge:'f85149', dist:'3fb950', access:'3fb950',
+          fw:'d29922', firewall:'d29922', leaf:'3fb950', spine:'a78bfa', host:'8b949e'},
+  },
+  print: {
+    bg:'#ffffff', title:'#1f2328', muted:'#57606a', hostname:'#1f2328',
+    nodeFill:'#ffffff', pillFill:'#ffffff',
+    corridorUp:'#0969da', corridorPartial:'#bc4c00', corridorDown:'#cf222e', corridorUpLabel:null,
+    wanRing:'#0969da', wanRingOpacity:0.95, wanRingWidth:1.8,
+    trunk:'#0969da', trunkOpacity:0.8, trunkWidth:2.2,
+    plainLink:'#57606a', plainLinkOpacity:0.85, plainLinkWidth:1.7,
+    fabric:'#8250df', fabricOpacity:0.55,
+    downBad:'#bc4c00', glow:false,
+    siteColors:{'NL-AMS':'1a7f37','EU-CDG':'9a6700','DE-FRA':'0969da','UK-LON':'8250df','US-NYC':'bc4c00','CLAB-DC1':'57606a'},
+    role:{core:'0969da', edge:'cf222e', dist:'1a7f37', access:'1a7f37',
+          fw:'9a6700', firewall:'9a6700', leaf:'1a7f37', spine:'8250df', host:'57606a'},
+  },
+};
+
 function renderTopoSVG(container, nodes, links, opts){
   opts = opts || {};
-  const SITE_COLORS = opts.siteColors || {};
+  const theme = opts.theme === 'print' ? 'print' : 'dark';
+  const T = TOPO_THEME[theme];
+  const SITE_COLORS = T.siteColors || opts.siteColors || {};
   const scope = opts.scope || 'core';
   const live  = opts.live !== undefined ? opts.live : (typeof LIVE !== 'undefined' && LIVE);
 
@@ -4408,8 +4463,7 @@ function renderTopoSVG(container, nodes, links, opts){
     'NL-AMS~UK-LON': ['nl-ams-core-01', 'uk-lon-core-01'],
     'UK-LON~US-NYC': ['uk-lon-core-01', 'us-nyc-core-01'],
   };
-  const ROLE_COLOR = {core:'58a6ff', edge:'f85149', dist:'3fb950', access:'3fb950',
-                      fw:'d29922', firewall:'d29922', leaf:'3fb950', spine:'a78bfa', host:'8b949e'};
+  const ROLE_COLOR = T.role;
   const ROLE_LABEL = {core:'CORE', edge:'EDGE', dist:'DIST', access:'ACC', fw:'FW',
                       firewall:'FW', leaf:'LEAF', spine:'SPINE', host:'HOST'};
   const VENDOR_LABEL = {frr:'FRR', juniper:'Juniper', arista:'Arista',
@@ -4456,20 +4510,22 @@ function renderTopoSVG(container, nodes, links, opts){
   const vbX = minX-M, vbY = minY-M-TOP;
 
   const P = [];
-  P.push(`<svg viewBox="${vbX} ${vbY} ${vbW} ${vbH}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:100%;background:#0d1117;border-radius:8px;font-family:'Segoe UI',Helvetica,Arial,sans-serif">`);
-  P.push(`<rect x="${vbX}" y="${vbY}" width="${vbW}" height="${vbH}" fill="#0d1117"/>`);
+  P.push(`<svg viewBox="${vbX} ${vbY} ${vbW} ${vbH}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:100%;background:${T.bg};border-radius:8px;font-family:'Segoe UI',Helvetica,Arial,sans-serif">`);
+  P.push(`<rect x="${vbX}" y="${vbY}" width="${vbW}" height="${vbH}" fill="${T.bg}"/>`);
 
   // ── title ──
-  P.push(`<text x="${minX}" y="${minY-M-16}" fill="#e6edf3" font-size="19" font-weight="700">DCN Multi-Region Backbone — BGP Topology</text>`);
-  P.push(`<text x="${maxX}" y="${minY-M-16}" fill="#8b949e" font-size="12.5" text-anchor="end">${nodes.length} devices · ${scope==='all' ? '5 regions + Lab B fabric' : '5 regions · eBGP mesh'}</text>`);
+  P.push(`<text x="${minX}" y="${minY-M-16}" fill="${T.title}" font-size="19" font-weight="700">DCN Multi-Region Backbone — BGP Topology</text>`);
+  P.push(`<text x="${maxX}" y="${minY-M-16}" fill="${T.muted}" font-size="12.5" text-anchor="end">${nodes.length} devices · ${scope==='all' ? '5 regions + Lab B fabric' : '5 regions · eBGP mesh'}</text>`);
 
   // ── region boxes ──
   visibleSites.forEach(s => {
-    const b=SITE_BOX[s], c='#'+(SITE_COLORS[s]||'8b949e');
+    const b=SITE_BOX[s], c='#'+(SITE_COLORS[s]||(theme==='print'?'57606a':'8b949e'));
     const cnt=nodes.filter(n=>n.site===s).length;
-    P.push(`<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="16" fill="${c}0c" stroke="${c}55" stroke-width="1.5"/>`);
+    const boxFill = theme==='print' ? c+'14' : c+'0c';
+    const boxStroke = theme==='print' ? c : c+'55';
+    P.push(`<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="16" fill="${boxFill}" stroke="${boxStroke}" stroke-width="1.5"/>`);
     P.push(`<text x="${b.x+16}" y="${b.y+25}" fill="${c}" font-size="15" font-weight="700">${s}</text>`);
-    P.push(`<text x="${b.x+16}" y="${b.y+42}" fill="#8b949e" font-size="10.5">${esc(b.city)} · ${cnt} devices</text>`);
+    P.push(`<text x="${b.x+16}" y="${b.y+42}" fill="${T.muted}" font-size="10.5">${esc(b.city)} · ${cnt} devices</text>`);
   });
 
   // ── inter-region corridors ──
@@ -4479,12 +4535,15 @@ function renderTopoSVG(container, nodes, links, opts){
     if (!a || !z) { a = POS[bd.links[0].source]; z = POS[bd.links[0].target]; }
     if (!a || !z) return;
     const pc = ctrlPt(a,z), n = bd.links.length, down = bd.links.filter(l=>!l.up).length;
-    const col = down===0 ? '#4493f8' : (down===n ? '#f85149' : '#f0883e');
+    const col = down===0 ? T.corridorUp : (down===n ? T.corridorDown : T.corridorPartial);
     const d = `M${a.x},${a.y} Q${pc.x.toFixed(0)},${pc.y.toFixed(0)} ${z.x},${z.y}`;
     const pairs = bd.links.map(l => `${l.source} ↔ ${l.target}`).join(', ');
     const title = `<title>${esc(bd.key.replace('~',' ↔ '))} — ${n}× 100G eBGP\n${esc(pairs)}</title>`;
-    P.push(`<path d="${d}" fill="none" stroke="${col}" stroke-width="${9+n*1.5}" opacity="0.16" stroke-linecap="round"/>`);
-    P.push(`<path d="${d}" fill="none" stroke="${col}" stroke-width="${2+n}" opacity="0.95" stroke-linecap="round"${down&&down<n?' stroke-dasharray="9,4"':''}>${title}</path>`);
+    // Dash ANY degraded corridor (partial or fully down) — status shouldn't
+    // rely on colour alone, especially once printed in black & white.
+    const dashDown = down > 0;
+    if (T.glow) P.push(`<path d="${d}" fill="none" stroke="${col}" stroke-width="${9+n*1.5}" opacity="0.16" stroke-linecap="round"/>`);
+    P.push(`<path d="${d}" fill="none" stroke="${col}" stroke-width="${2+n}" opacity="0.95" stroke-linecap="round"${dashDown?' stroke-dasharray="9,4"':''}>${title}</path>`);
     // place the label on the arc, nudged along it until clear of every box
     let m = qbez(a,pc,z,0.5);
     for (const t of [0.5,0.42,0.58,0.35,0.65,0.28,0.72]) {
@@ -4493,54 +4552,58 @@ function renderTopoSVG(container, nodes, links, opts){
     }
     const label = `${n}× 100G` + (down ? ` (${down}↓)` : '');
     const lw = 14 + label.length*6.2;
-    P.push(`<rect x="${(m.x-lw/2).toFixed(0)}" y="${(m.y-11).toFixed(0)}" width="${lw.toFixed(0)}" height="20" rx="6" fill="#0d1117" stroke="${col}"/>`);
-    P.push(`<text x="${m.x.toFixed(0)}" y="${(m.y+3.5).toFixed(0)}" fill="${col==='#4493f8'?'#79c0ff':col}" font-size="11" text-anchor="middle" font-weight="600">${label}</text>`);
+    const labelText = theme==='print' ? col : (col===T.corridorUp ? T.corridorUpLabel : col);
+    P.push(`<rect x="${(m.x-lw/2).toFixed(0)}" y="${(m.y-11).toFixed(0)}" width="${lw.toFixed(0)}" height="20" rx="6" fill="${T.pillFill}" stroke="${col}"/>`);
+    P.push(`<text x="${m.x.toFixed(0)}" y="${(m.y+3.5).toFixed(0)}" fill="${labelText}" font-size="11" text-anchor="middle" font-weight="600">${label}</text>`);
   });
 
   // ── Lab B fabric links (only present when scope='all') ──
   links.filter(l=>l.type==='fabric').forEach(l=>{
     const s=POS[l.source], t=POS[l.target]; if(!s||!t) return;
-    P.push(`<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="#a78bfa" stroke-width="1.1" opacity="0.4"/>`);
+    P.push(`<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="${T.fabric}" stroke-width="1.1" opacity="${T.fabricOpacity}"/>`);
   });
   if (visibleSites.includes('CLAB-DC1')) {
     const b=SITE_BOX['CLAB-DC1'];
-    P.push(`<text x="${b.x+b.w-14}" y="${b.y+25}" fill="#8b949e" font-size="10" text-anchor="end">spine–leaf eBGP underlay + EVPN overlay · isolated (no backbone peering)</text>`);
+    P.push(`<text x="${b.x+b.w-14}" y="${b.y+25}" fill="${T.muted}" font-size="10" text-anchor="end">spine–leaf eBGP underlay + EVPN overlay · isolated (no backbone peering)</text>`);
   }
 
-  // ── intra-site links (blue-tinted between two WAN routers: internal transit
-  //    path toward a corridor; plain grey otherwise) ──
+  // ── intra-site links (tinted between two WAN routers: internal transit
+  //    path toward a corridor; plain otherwise) ──
   links.filter(l=>l.type==='intra').forEach(l=>{
     const s=POS[l.source], t=POS[l.target]; if(!s||!t) return;
     const trunk = wan.has(l.source) && wan.has(l.target);
-    P.push(`<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="${trunk?'#4493f8':'#8b949e'}" stroke-width="${trunk?2:1.5}" opacity="${trunk?0.55:0.6}"/>`);
+    const col = trunk ? T.trunk : T.plainLink;
+    const w   = trunk ? T.trunkWidth : T.plainLinkWidth;
+    const op  = trunk ? T.trunkOpacity : T.plainLinkOpacity;
+    P.push(`<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="${col}" stroke-width="${w}" opacity="${op}"/>`);
   });
 
   // ── device nodes ──
   nodes.forEach(n=>{
     const p=POS[n.id]; if(!p) return;
     const role=(n.role||'').toLowerCase();
-    const nc='#'+(ROLE_COLOR[role]||'8b949e');
+    const nc='#'+(ROLE_COLOR[role]||(theme==='print'?'57606a':'8b949e'));
     const r = role==='host' ? 14 : 21;
     let g = `<g data-host="${n.id}" style="cursor:pointer" tabindex="0" role="button" aria-label="Device ${n.id}">`;
     if (wan.has(n.id) && role!=='host')
-      g += `<circle cx="${p.x}" cy="${p.y}" r="${r+5}" fill="none" stroke="#4493f8" stroke-width="1.6" opacity="0.8"/>`;
-    g += `<circle cx="${p.x}" cy="${p.y}" r="${r}" fill="#161b22" stroke="${nc}" stroke-width="2.2"/>`;
+      g += `<circle cx="${p.x}" cy="${p.y}" r="${r+5}" fill="none" stroke="${T.wanRing}" stroke-width="${T.wanRingWidth}" opacity="${T.wanRingOpacity}"/>`;
+    g += `<circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${T.nodeFill}" stroke="${nc}" stroke-width="2.2"/>`;
     g += `<text x="${p.x}" y="${p.y+3.5}" text-anchor="middle" font-size="8.5" fill="${nc}" font-weight="700">${ROLE_LABEL[role]||role.toUpperCase().slice(0,5)}</text>`;
     g += `</g>`;
-    g += `<text x="${p.x}" y="${p.y+r+15}" text-anchor="middle" font-size="9.5" fill="#e6edf3" font-family="Consolas,Menlo,monospace">${n.id}</text>`;
+    g += `<text x="${p.x}" y="${p.y+r+15}" text-anchor="middle" font-size="9.5" fill="${T.hostname}" font-family="Consolas,Menlo,monospace">${n.id}</text>`;
     let sub = n.as ? 'AS'+n.as : '';
     const vlabel = VENDOR_LABEL[(n.vendor||'').toLowerCase()] || (n.vendor||'');
     if (vlabel) sub += (sub?'  ·  ':'') + vlabel;
-    if (sub) g += `<text x="${p.x}" y="${p.y+r+27}" text-anchor="middle" font-size="8.5" fill="#8b949e">${esc(sub)}</text>`;
+    if (sub) g += `<text x="${p.x}" y="${p.y+r+27}" text-anchor="middle" font-size="8.5" fill="${T.muted}">${esc(sub)}</text>`;
     P.push(g);
   });
 
   // ── legend + footer ──
   const upB = links.filter(l=>l.type==='backbone'&&l.up).length;
   const dnB = links.filter(l=>l.type==='backbone'&&!l.up).length;
-  P.push(`<text x="${minX}" y="${maxY+M-18}" fill="#8b949e" font-size="10">━ blue corridor = inter-region link bundle (N× 100G eBGP)   ·   ━ blue thin = intra-site transit between gateways   ·   ─ grey = intra-site link</text>`);
-  P.push(`<text x="${minX}" y="${maxY+M-4}" fill="#8b949e" font-size="10">◯ ring = router that carries an inter-region BGP session (co-gateways reach the corridor via the site core)   ·   node colour = role</text>`);
-  P.push(`<text x="${maxX}" y="${maxY+M-4}" text-anchor="end" font-size="10" fill="${dnB?'#f0883e':'#8b949e'}">${upB} inter-region sessions up${dnB?` · ${dnB} down`:''} · ${live?'live':'demo'}</text>`);
+  P.push(`<text x="${minX}" y="${maxY+M-18}" fill="${T.muted}" font-size="10">━ blue corridor = inter-region link bundle (N× 100G eBGP, dashed = degraded)   ·   ━ blue thin = intra-site transit between gateways   ·   ─ grey = intra-site link</text>`);
+  P.push(`<text x="${minX}" y="${maxY+M-4}" fill="${T.muted}" font-size="10">◯ ring = router that carries an inter-region BGP session (co-gateways reach the corridor via the site core)   ·   node colour = role</text>`);
+  P.push(`<text x="${maxX}" y="${maxY+M-4}" text-anchor="end" font-size="10" fill="${dnB?T.downBad:T.muted}">${upB} inter-region sessions up${dnB?` · ${dnB} down`:''} · ${live?'live':'demo'}</text>`);
   P.push('</svg>');
 
   container.textContent = '';
