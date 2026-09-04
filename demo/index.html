@@ -1723,6 +1723,7 @@ body.noc-wall .icon-rail{display:none}
           <button class="btn p" id="topo-scope-core" onclick="setTopoScope('core')" style="border:0;border-radius:0">Backbone (26)</button>
           <button class="btn" id="topo-scope-all" onclick="setTopoScope('all')" style="border:0;border-radius:0;border-left:1px solid var(--border)">+ Lab B (41)</button>
         </span>
+        <button class="btn" id="topo-export-svg" onclick="exportTopoSVG()" title="Download this view as a vector SVG (for print / thesis figures)">&#x2B07; SVG</button>
         <!-- Audit #22: visible "Last fetched" timestamp so operators know if they're looking at stale data -->
         <span class="topo-last-updated" id="topo-last-updated" title="Last fetched">never</span>
         <button class="btn" onclick="remediate('status')" style="border-color:var(--teal);color:var(--teal)">&#x1F4CB; Status</button>
@@ -4152,6 +4153,39 @@ function setTopoScope(scope){
   document.getElementById('topo-scope-core')?.classList.toggle('p', scope === 'core');
   document.getElementById('topo-scope-all')?.classList.toggle('p', scope === 'all');
   if (_topoBuilt) buildLiveTopology();
+}
+
+/* Export the topology exactly as shown as a standalone vector SVG —
+   lossless at any print size, respects the active scope filter. */
+function exportTopoSVG(){
+  const src = document.querySelector('#tab-topo svg');
+  const statusEl = document.getElementById('topo-status');
+  if (!src){
+    if (statusEl) statusEl.textContent = 'Build the topology first, then export.';
+    return;
+  }
+  const svg = src.cloneNode(true);
+  // give the file an intrinsic size from the viewBox; drop the fit-to-panel
+  // style but keep the font stack (it lived in the style attribute)
+  const vb = (svg.getAttribute('viewBox') || '0 0 1400 900').split(/\s+/).map(Number);
+  svg.removeAttribute('style');
+  svg.setAttribute('width', Math.round(vb[2]));
+  svg.setAttribute('height', Math.round(vb[3]));
+  svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  svg.setAttribute('font-family', "'Segoe UI',Helvetica,Arial,sans-serif");
+  // strip live-only decoration (health halos, focus outlines, pointer cursor)
+  svg.querySelectorAll('[class*="topo-node-"]').forEach(n => n.removeAttribute('class'));
+  svg.querySelectorAll('[style*="cursor"]').forEach(n => n.removeAttribute('style'));
+  svg.querySelectorAll('[tabindex]').forEach(n => n.removeAttribute('tabindex'));
+
+  const xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(svg);
+  const blob = new Blob([xml], {type: 'image/svg+xml;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `bgp-topology-${topoScope === 'all' ? '41-with-labB' : '26-backbone'}-${new Date().toISOString().slice(0,10)}.svg`;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  if (statusEl) statusEl.textContent = `Exported ${a.download}`;
 }
 
 async function buildLiveTopology(){
