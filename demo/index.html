@@ -4160,42 +4160,50 @@ async function buildLiveTopology(){
   const canvas = document.getElementById('topo-canvas');
   loading('topo-canvas', 'Running show bgp summary on all devices…');
 
-  // Positions for all 26 multivendor devices (W=1400 H=520, 5 sites)
+  // Deterministic figure layout — hand-computed so no inter-region link
+  // crosses a third region (planar hub-and-fan: DE-FRA in the centre, the
+  // four peer regions fanned CDG→AMS→LON→NYC). Verified crossing-free.
   // FRR names match live API short-form: fra-core-01, lon-core-01 etc.
   const POS = {
-    // DE-FRA (10 devices) — box x:15 w:375
-    'de-fra-fw-01':     {x:60,  y:145, site:'DE-FRA'},
-    'de-fra-mx-01':     {x:185, y:145, site:'DE-FRA'},
-    'de-fra-eos-rt-01': {x:320, y:145, site:'DE-FRA'},
-    'de-fra-core-01':   {x:60,  y:255, site:'DE-FRA'},  // FRR live (API name)
-    'de-fra-core-02':   {x:185, y:255, site:'DE-FRA'},
-    'de-fra-edge-01':   {x:320, y:255, site:'DE-FRA'},
-    'de-fra-ex-01':     {x:60,  y:370, site:'DE-FRA'},
-    'de-fra-ex-02':     {x:160, y:370, site:'DE-FRA'},
-    'de-fra-eos-sw-01': {x:260, y:370, site:'DE-FRA'},
-    'de-fra-dist-01':   {x:355, y:370, site:'DE-FRA'},
-    // UK-LON (5 devices) — box x:405 w:250
-    'uk-lon-fw-01':     {x:445, y:145, site:'UK-LON'},
-    'uk-lon-ex-01':     {x:565, y:145, site:'UK-LON'},
-    'uk-lon-core-01':   {x:445, y:255, site:'UK-LON'},  // FRR live
-    'uk-lon-edge-01':   {x:445, y:370, site:'UK-LON'},
-    'uk-lon-dist-01':   {x:565, y:370, site:'UK-LON'},
-    // NL-AMS (6 devices) — box x:670 w:265
-    'nl-ams-fw-01':     {x:710, y:145, site:'NL-AMS'},
-    'nl-ams-eos-rt-01': {x:840, y:145, site:'NL-AMS'},
-    'nl-ams-core-01':   {x:710, y:255, site:'NL-AMS'},  // FRR live
-    'nl-ams-edge-01':   {x:840, y:255, site:'NL-AMS'},
-    'nl-ams-ex-01':     {x:710, y:370, site:'NL-AMS'},
-    'nl-ams-eos-sw-01': {x:840, y:370, site:'NL-AMS'},
-    // EU-CDG (2 devices) — box x:950 w:155
-    'eu-cdg-mx-01':     {x:990, y:145, site:'EU-CDG'},
-    'eu-cdg-eos-rt-01': {x:990, y:255, site:'EU-CDG'},
-    // US-NYC (3 devices) — box x:1120 w:265
-    'us-nyc-fw-01':     {x:1160, y:145, site:'US-NYC'},
-    'us-nyc-eos-rt-01': {x:1265, y:145, site:'US-NYC'},
-    'us-nyc-core-01':   {x:1160, y:255, site:'US-NYC'},  // FRR live
+    // ── NL-AMS ── core-01 on the SE corner (gateway toward FRA / CDG / LON)
+    'nl-ams-fw-01':     {x:150, y:180, site:'NL-AMS'},
+    'nl-ams-ex-01':     {x:148, y:285, site:'NL-AMS'},
+    'nl-ams-edge-01':   {x:175, y:405, site:'NL-AMS'},
+    'nl-ams-eos-sw-01': {x:265, y:410, site:'NL-AMS'},
+    'nl-ams-core-01':   {x:345, y:355, site:'NL-AMS'},
+    'nl-ams-eos-rt-01': {x:350, y:250, site:'NL-AMS'},
+    // ── EU-CDG ──
+    'eu-cdg-mx-01':     {x:225, y:600, site:'EU-CDG'},
+    'eu-cdg-eos-rt-01': {x:225, y:700, site:'EU-CDG'},
+    // ── DE-FRA ── core pair up top; WAN routers on the W edge; access at the base
+    'de-fra-core-01':   {x:800, y:490, site:'DE-FRA'},
+    'de-fra-core-02':   {x:960, y:486, site:'DE-FRA'},
+    'de-fra-eos-rt-01': {x:605, y:498, site:'DE-FRA'},
+    'de-fra-mx-01':     {x:605, y:600, site:'DE-FRA'},
+    'de-fra-fw-01':     {x:652, y:545, site:'DE-FRA'},
+    'de-fra-edge-01':   {x:890, y:588, site:'DE-FRA'},
+    'de-fra-dist-01':   {x:770, y:700, site:'DE-FRA'},
+    'de-fra-eos-sw-01': {x:655, y:685, site:'DE-FRA'},
+    'de-fra-ex-01':     {x:905, y:690, site:'DE-FRA'},
+    'de-fra-ex-02':     {x:1010,y:755, site:'DE-FRA'},
+    // ── UK-LON ── core-01 low-centre; access devices in the upper half
+    'uk-lon-fw-01':     {x:690, y:140, site:'UK-LON'},
+    'uk-lon-ex-01':     {x:905, y:140, site:'UK-LON'},
+    'uk-lon-edge-01':   {x:705, y:215, site:'UK-LON'},
+    'uk-lon-dist-01':   {x:900, y:215, site:'UK-LON'},
+    'uk-lon-core-01':   {x:800, y:270, site:'UK-LON'},
+    // ── US-NYC ── core-01 on the SW corner (gateway toward FRA / LON)
+    'us-nyc-fw-01':     {x:1400,y:165, site:'US-NYC'},
+    'us-nyc-eos-rt-01': {x:1258,y:160, site:'US-NYC'},
+    'us-nyc-core-01':   {x:1258,y:285, site:'US-NYC'},
+    // ── CLAB-DC1 (Lab B, containerlab Clos-EVPN) — only shown when scope='all'
+    'spine1': {x:820, y:925, site:'CLAB-DC1'}, 'spine2': {x:970, y:925, site:'CLAB-DC1'}, 'spine3': {x:1120,y:925, site:'CLAB-DC1'},
+    'leaf1':  {x:560, y:1025, site:'CLAB-DC1'}, 'leaf2':  {x:720, y:1025, site:'CLAB-DC1'}, 'leaf3':  {x:880, y:1025, site:'CLAB-DC1'},
+    'leaf4':  {x:1040,y:1025, site:'CLAB-DC1'}, 'leaf5':  {x:1200,y:1025, site:'CLAB-DC1'}, 'leaf6':  {x:1350,y:1025, site:'CLAB-DC1'},
+    'host1':  {x:560, y:1110, site:'CLAB-DC1'}, 'host2':  {x:720, y:1110, site:'CLAB-DC1'}, 'host3':  {x:880, y:1110, site:'CLAB-DC1'},
+    'host4':  {x:1040,y:1110, site:'CLAB-DC1'}, 'host5':  {x:1200,y:1110, site:'CLAB-DC1'}, 'host6':  {x:1350,y:1110, site:'CLAB-DC1'},
   };
-  const SITE_COLORS = {'DE-FRA':'58a6ff','UK-LON':'3fb950','NL-AMS':'f0883e','EU-CDG':'e5c07b','US-NYC':'a78bfa'};
+  const SITE_COLORS = {'DE-FRA':'58a6ff','UK-LON':'a78bfa','NL-AMS':'3fb950','EU-CDG':'e5c07b','US-NYC':'f0883e','CLAB-DC1':'8b949e'};
 
   // Use DEVICES to know all nodes even if no BGP.
   // Scope filter: exclude the containerlab Clos-EVPN fabric (Lab B) unless
@@ -4253,6 +4261,13 @@ async function buildLiveTopology(){
     // ══ INTRA-SITE — US-NYC 10G ════════════════════════════════════════════
     {source:'us-nyc-fw-01',    target:'us-nyc-core-01',    bw:'10G', type:'intra'},
     {source:'us-nyc-eos-rt-01',target:'us-nyc-core-01',    bw:'10G', type:'intra'},
+    // ══ LAB B — containerlab Clos-EVPN fabric (only rendered when scope='all')
+    // spine↔leaf eBGP underlay + EVPN overlay (same device pairs), host access
+    ...['spine1','spine2','spine3'].flatMap(sp =>
+        ['leaf1','leaf2','leaf3','leaf4','leaf5','leaf6'].map(lf =>
+          ({source:sp, target:lf, bw:'25G', type:'fabric'}))),
+    ...['leaf1','leaf2','leaf3','leaf4','leaf5','leaf6'].map((lf,i) =>
+        ({source:'host'+(i+1), target:lf, bw:'10G', type:'fabric'})),
   ];
 
   const asMap = {
@@ -4314,110 +4329,190 @@ async function buildLiveTopology(){
     document.getElementById('topo-mode-badge').className = 'tag-info';
   }
 
-  renderTopoSVG(canvas, nodes, links, SITE_COLORS);
+  renderTopoSVG(canvas, nodes, links, {siteColors:SITE_COLORS, scope:topoScope, live:LIVE});
   document.getElementById('topo-build-btn').disabled = false;
   document.getElementById('topo-build-btn').style.display = 'none';
   document.getElementById('topo-refresh-btn').style.display = '';
 }
 
-function renderTopoSVG(container, nodes, links, SITE_COLORS){
-  const W=1400, H=520;
+/* Deterministic, crossing-free renderer for the BGP Topology figure.
+   Inter-region connectivity is drawn as ONE bundled corridor per region
+   pair, anchored on each region's gateway core router and bowed away from
+   the DE-FRA hub. Co-participant WAN routers ride their intra-site link to
+   the anchor, so a corridor is always a single clean arc that never enters
+   a third region. Layout is hand-computed (see POS table) — no physics,
+   reproducible, print-ready. */
+function renderTopoSVG(container, nodes, links, opts){
+  opts = opts || {};
+  const SITE_COLORS = opts.siteColors || {};
+  const scope = opts.scope || 'core';
+  const live  = opts.live !== undefined ? opts.live : (typeof LIVE !== 'undefined' && LIVE);
+
   const POS = {};
-  nodes.forEach(n => { POS[n.id] = n.pos || {x:700,y:260}; });
+  nodes.forEach(n => { POS[n.id] = n.pos || {x:840, y:640, site:n.site}; });
 
-  const SITE_BOXES = {
-    'DE-FRA':{x:15,  y:90, w:375, h:360, c:'58a6ff'},
-    'UK-LON':{x:405, y:90, w:250, h:360, c:'3fb950'},
-    'NL-AMS':{x:670, y:90, w:265, h:360, c:'f0883e'},
-    'EU-CDG':{x:950, y:90, w:155, h:230, c:'e5c07b'},
-    'US-NYC':{x:1120,y:90, w:265, h:230, c:'a78bfa'},
+  // Region boxes — must stay consistent with the POS table in buildLiveTopology.
+  const SITE_BOX = {
+    'NL-AMS':  {x:70,   y:120, w:330,  h:330, city:'Amsterdam'},
+    'EU-CDG':  {x:95,   y:560, w:250,  h:190, city:'Paris'},
+    'DE-FRA':  {x:548,  y:438, w:590,  h:372, city:'Frankfurt'},
+    'UK-LON':  {x:620,  y:70,  w:380,  h:250, city:'London'},
+    'US-NYC':  {x:1180, y:95,  w:280,  h:255, city:'New York'},
+    'CLAB-DC1':{x:470,  y:858, w:1000, h:286, city:'containerlab Clos-EVPN — Lab B'},
   };
-  const ROLE_ICON = {core:'🔀', edge:'🔒', dist:'🔲', fw:'🔒', rt:'🔀', sw:'🔲'};
+  const HUB = {x:SITE_BOX['DE-FRA'].x + SITE_BOX['DE-FRA'].w/2,
+              y:SITE_BOX['DE-FRA'].y + SITE_BOX['DE-FRA'].h/2};
 
-  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:100%;background:#0d1117;border-radius:8px;font-family:'Segoe UI',monospace">
-  <defs>
-    <filter id="glow"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-    <filter id="glow2"><feGaussianBlur stdDeviation="5" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-    <style>
-      @keyframes dash100{to{stroke-dashoffset:-24}}
-      @keyframes dash10{to{stroke-dashoffset:-16}}
-      .link-100g{stroke-dasharray:10,5;animation:dash100 1.2s linear infinite;}
-      .link-10g{stroke-dasharray:5,4;animation:dash10 1.8s linear infinite;}
-      .link-dn{stroke-dasharray:4,8;}
-    </style>
-  </defs>\n`;
+  // Gateway core router that anchors each inter-region corridor.
+  // Key = the two region codes, sorted, joined by '~'.
+  const CORRIDOR_ANCHOR = {
+    'DE-FRA~EU-CDG': ['de-fra-mx-01',   'eu-cdg-mx-01'],
+    'DE-FRA~UK-LON': ['de-fra-core-01', 'uk-lon-core-01'],
+    'DE-FRA~NL-AMS': ['de-fra-core-01', 'nl-ams-core-01'],
+    'DE-FRA~US-NYC': ['de-fra-core-02', 'us-nyc-core-01'],
+    'EU-CDG~NL-AMS': ['eu-cdg-mx-01',   'nl-ams-core-01'],
+    'NL-AMS~UK-LON': ['nl-ams-core-01', 'uk-lon-core-01'],
+    'UK-LON~US-NYC': ['uk-lon-core-01', 'us-nyc-core-01'],
+  };
+  const ROLE_COLOR = {core:'58a6ff', edge:'f85149', dist:'3fb950', access:'3fb950',
+                      fw:'d29922', firewall:'d29922', leaf:'3fb950', spine:'a78bfa', host:'8b949e'};
+  const ROLE_LABEL = {core:'CORE', edge:'EDGE', dist:'DIST', access:'ACC', fw:'FW',
+                      firewall:'FW', leaf:'LEAF', spine:'SPINE', host:'HOST'};
+  const VENDOR_LABEL = {frr:'FRR', juniper:'Juniper', arista:'Arista',
+                        nokia:'Nokia', linux:'Linux', cisco:'Cisco'};
 
-  // Site group boxes
-  Object.entries(SITE_BOXES).forEach(([site,b])=>{
-    svg += `  <rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="10" fill="#${b.c}0d" stroke="#${b.c}44" stroke-width="1.5"/>
-  <text x="${b.x+b.w/2}" y="${b.y-8}" text-anchor="middle" font-size="11" fill="#${b.c}" font-weight="700" letter-spacing="1">${site}</text>\n`;
+  const siteOf = h => (POS[h] && POS[h].site) || 'DE-FRA';
+  const visibleSites = [...new Set(nodes.map(n => n.site))].filter(s => SITE_BOX[s]);
+  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  // ── geometry ──
+  const qbez = (p0,pc,p1,t) => ({
+    x:(1-t)*(1-t)*p0.x + 2*(1-t)*t*pc.x + t*t*p1.x,
+    y:(1-t)*(1-t)*p0.y + 2*(1-t)*t*pc.y + t*t*p1.y });
+  function ctrlPt(p0,p1){                       // bow the arc away from the hub
+    const mx=(p0.x+p1.x)/2, my=(p0.y+p1.y)/2;
+    let dx=mx-HUB.x, dy=my-HUB.y; const d=Math.hypot(dx,dy)||1;
+    const L=Math.hypot(p1.x-p0.x, p1.y-p0.y);
+    const bow=Math.min(0.14*L, 46);
+    return {x:mx + dx/d*bow, y:my + dy/d*bow};
+  }
+
+  // ── bundle backbone links by region pair; note which devices carry them ──
+  const bundles = {};
+  const wan = new Set();
+  links.filter(l => l.type === 'backbone').forEach(l => {
+    wan.add(l.source); wan.add(l.target);
+    const sa=siteOf(l.source), sb=siteOf(l.target);
+    if (sa === sb || !SITE_BOX[sa] || !SITE_BOX[sb]) return;
+    const key=[sa,sb].sort().join('~');
+    (bundles[key] = bundles[key] || {key, links:[]}).links.push(l);
   });
 
-  // BGP links — draw backbone (100G) first, then intra-site (10G) on top
-  const sortedLinks = [...links].sort((a,b)=>(a.type==='backbone'?0:1)-(b.type==='backbone'?0:1));
-  sortedLinks.forEach(l=>{
-    const s=POS[l.source], t=POS[l.target];
-    if(!s||!t) return;
-    const isBackbone = l.type === 'backbone';
-    const bw = l.bw || '10G';
-    const col = l.up ? (isBackbone ? '#58a6ff' : '#3fb950') : '#f85149';
-    const strokeW = isBackbone ? 3 : 1.5;
-    const opacity = isBackbone ? 0.85 : 0.55;
-    const cls = l.up ? (isBackbone ? 'link-100g' : 'link-10g') : 'link-dn';
-    // Curve control point — pull inter-site links outward to avoid overlap
-    const dx = t.x - s.x, dy = t.y - s.y;
-    const curve = isBackbone ? -30 : -12;
-    const midX = (s.x+t.x)/2 - dy*0.08;
-    const midY = (s.y+t.y)/2 + dx*0.0 + curve;
-    const bgFilter = isBackbone ? 'url(#glow2)' : 'none';
-    // Glow under backbone links
-    if(isBackbone && l.up){
-      svg += `  <path d="M${s.x},${s.y} Q${midX},${midY} ${t.x},${t.y}" fill="none" stroke="${col}" stroke-width="8" opacity="0.12"/>\n`;
+  const inAnyBox = (x,y) => visibleSites.some(s => {
+    const b = SITE_BOX[s];
+    return x >= b.x-8 && x <= b.x+b.w+8 && y >= b.y-8 && y <= b.y+b.h+8;
+  });
+
+  // ── viewBox: visible boxes + room for title / legend ──
+  const bxs = visibleSites.map(s => SITE_BOX[s]);
+  const minX = Math.min(...bxs.map(b=>b.x)),     maxX = Math.max(...bxs.map(b=>b.x+b.w));
+  const minY = Math.min(...bxs.map(b=>b.y)),     maxY = Math.max(...bxs.map(b=>b.y+b.h));
+  const M=48, TOP=54, BOT=46;
+  const vbW = maxX-minX + 2*M, vbH = maxY-minY + 2*M + TOP + BOT;
+  const vbX = minX-M, vbY = minY-M-TOP;
+
+  const P = [];
+  P.push(`<svg viewBox="${vbX} ${vbY} ${vbW} ${vbH}" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:100%;background:#0d1117;border-radius:8px;font-family:'Segoe UI',Helvetica,Arial,sans-serif">`);
+  P.push(`<rect x="${vbX}" y="${vbY}" width="${vbW}" height="${vbH}" fill="#0d1117"/>`);
+
+  // ── title ──
+  P.push(`<text x="${minX}" y="${minY-M-16}" fill="#e6edf3" font-size="19" font-weight="700">DCN Multi-Region Backbone — BGP Topology</text>`);
+  P.push(`<text x="${maxX}" y="${minY-M-16}" fill="#8b949e" font-size="12.5" text-anchor="end">${nodes.length} devices · ${scope==='all' ? '5 regions + Lab B fabric' : '5 regions · eBGP mesh'}</text>`);
+
+  // ── region boxes ──
+  visibleSites.forEach(s => {
+    const b=SITE_BOX[s], c='#'+(SITE_COLORS[s]||'8b949e');
+    const cnt=nodes.filter(n=>n.site===s).length;
+    P.push(`<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="16" fill="${c}0c" stroke="${c}55" stroke-width="1.5"/>`);
+    P.push(`<text x="${b.x+16}" y="${b.y+25}" fill="${c}" font-size="15" font-weight="700">${s}</text>`);
+    P.push(`<text x="${b.x+16}" y="${b.y+42}" fill="#8b949e" font-size="10.5">${esc(b.city)} · ${cnt} devices</text>`);
+  });
+
+  // ── inter-region corridors ──
+  Object.values(bundles).forEach(bd => {
+    const an = CORRIDOR_ANCHOR[bd.key];
+    let a = an && POS[an[0]], z = an && POS[an[1]];
+    if (!a || !z) { a = POS[bd.links[0].source]; z = POS[bd.links[0].target]; }
+    if (!a || !z) return;
+    const pc = ctrlPt(a,z), n = bd.links.length, down = bd.links.filter(l=>!l.up).length;
+    const col = down===0 ? '#4493f8' : (down===n ? '#f85149' : '#f0883e');
+    const d = `M${a.x},${a.y} Q${pc.x.toFixed(0)},${pc.y.toFixed(0)} ${z.x},${z.y}`;
+    const pairs = bd.links.map(l => `${l.source} ↔ ${l.target}`).join(', ');
+    const title = `<title>${esc(bd.key.replace('~',' ↔ '))} — ${n}× 100G eBGP\n${esc(pairs)}</title>`;
+    P.push(`<path d="${d}" fill="none" stroke="${col}" stroke-width="${9+n*1.5}" opacity="0.16" stroke-linecap="round"/>`);
+    P.push(`<path d="${d}" fill="none" stroke="${col}" stroke-width="${2+n}" opacity="0.95" stroke-linecap="round"${down&&down<n?' stroke-dasharray="9,4"':''}>${title}</path>`);
+    // place the label on the arc, nudged along it until clear of every box
+    let m = qbez(a,pc,z,0.5);
+    for (const t of [0.5,0.42,0.58,0.35,0.65,0.28,0.72]) {
+      const q = qbez(a,pc,z,t);
+      if (!inAnyBox(q.x,q.y)) { m = q; break; }
     }
-    svg += `  <path d="M${s.x},${s.y} Q${midX},${midY} ${t.x},${t.y}" fill="none" stroke="${col}" stroke-width="${strokeW}" opacity="${opacity}" class="${cls}"/>\n`;
-    // Bandwidth label pill on the link midpoint
-    const lblX = midX, lblY = midY - 2;
-    const lblW = isBackbone ? 36 : 30;
-    const lblH = 13;
-    svg += `  <rect x="${lblX-lblW/2}" y="${lblY-10}" width="${lblW}" height="${lblH}" rx="4" fill="#0d1117" stroke="${col}" stroke-width="0.8" opacity="0.9"/>
-  <text x="${lblX}" y="${lblY}" text-anchor="middle" font-size="${isBackbone?9:8}" fill="${col}" font-weight="${isBackbone?'700':'400'}">${bw}</text>
-  <text x="${lblX}" y="${lblY+9}" text-anchor="middle" font-size="7" fill="${col}" opacity="0.7">${l.up?'BGP ✓':'BGP ✗'}</text>\n`;
+    const label = `${n}× 100G` + (down ? ` (${down}↓)` : '');
+    const lw = 14 + label.length*6.2;
+    P.push(`<rect x="${(m.x-lw/2).toFixed(0)}" y="${(m.y-11).toFixed(0)}" width="${lw.toFixed(0)}" height="20" rx="6" fill="#0d1117" stroke="${col}"/>`);
+    P.push(`<text x="${m.x.toFixed(0)}" y="${(m.y+3.5).toFixed(0)}" fill="${col==='#4493f8'?'#79c0ff':col}" font-size="11" text-anchor="middle" font-weight="600">${label}</text>`);
   });
 
-  // Device nodes
+  // ── Lab B fabric links (only present when scope='all') ──
+  links.filter(l=>l.type==='fabric').forEach(l=>{
+    const s=POS[l.source], t=POS[l.target]; if(!s||!t) return;
+    P.push(`<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="#a78bfa" stroke-width="1.1" opacity="0.4"/>`);
+  });
+  if (visibleSites.includes('CLAB-DC1')) {
+    const b=SITE_BOX['CLAB-DC1'];
+    P.push(`<text x="${b.x+b.w-14}" y="${b.y+25}" fill="#8b949e" font-size="10" text-anchor="end">spine–leaf eBGP underlay + EVPN overlay · isolated (no backbone peering)</text>`);
+  }
+
+  // ── intra-site links (blue-tinted between two WAN routers: internal transit
+  //    path toward a corridor; plain grey otherwise) ──
+  links.filter(l=>l.type==='intra').forEach(l=>{
+    const s=POS[l.source], t=POS[l.target]; if(!s||!t) return;
+    const trunk = wan.has(l.source) && wan.has(l.target);
+    P.push(`<line x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" stroke="${trunk?'#4493f8':'#8b949e'}" stroke-width="${trunk?2:1.5}" opacity="${trunk?0.55:0.6}"/>`);
+  });
+
+  // ── device nodes ──
   nodes.forEach(n=>{
-    const p=POS[n.id];
-    if(!p) return;
-    const sc = SITE_COLORS[n.site]||'8b949e';
-    const roleColors = {core:'58a6ff', edge:'f85149', dist:'3fb950', fw:'f85149', rt:'58a6ff', sw:'3fb950'};
-    const nc = roleColors[n.role]||'8b949e';
-    const icon = ROLE_ICON[n.role]||'●';
-    const vendorLabel = n.vendor ? n.vendor.substring(0,3).toUpperCase() : n.dtype.toUpperCase().substring(0,3);
-    const modelLabel = n.model || '';
-    svg += `  <g filter="url(#glow)" data-host="${n.id}" style="cursor:pointer" tabindex="0" role="button" aria-label="Device ${n.id}">
-    <circle cx="${p.x}" cy="${p.y}" r="28" fill="#161b22" stroke="#${nc}" stroke-width="2"/>
-    <circle cx="${p.x}" cy="${p.y}" r="24" fill="#${nc}18"/>
-    <text x="${p.x}" y="${p.y-6}" text-anchor="middle" font-size="14">${icon}</text>
-    <text x="${p.x}" y="${p.y+7}" text-anchor="middle" font-size="8" fill="#${nc}" font-weight="700">${n.role.toUpperCase()}</text>
-    ${n.as?`<rect x="${p.x-14}" y="${p.y+16}" width="28" height="13" rx="4" fill="#${nc}22" stroke="#${nc}55" stroke-width="0.8"/><text x="${p.x}" y="${p.y+26}" text-anchor="middle" font-size="8" fill="#${nc}">AS${n.as}</text>`:''}
-  </g>
-  <text x="${p.x}" y="${p.y+48}" text-anchor="middle" font-size="8.5" fill="#e6edf3" font-family="Consolas,monospace">${n.id}</text>
-  <text x="${p.x}" y="${p.y+60}" text-anchor="middle" font-size="7.5" fill="#8b949e">${vendorLabel} ${modelLabel}</text>\n`;
+    const p=POS[n.id]; if(!p) return;
+    const role=(n.role||'').toLowerCase();
+    const nc='#'+(ROLE_COLOR[role]||'8b949e');
+    const r = role==='host' ? 14 : 21;
+    let g = `<g data-host="${n.id}" style="cursor:pointer" tabindex="0" role="button" aria-label="Device ${n.id}">`;
+    if (wan.has(n.id) && role!=='host')
+      g += `<circle cx="${p.x}" cy="${p.y}" r="${r+5}" fill="none" stroke="#4493f8" stroke-width="1.6" opacity="0.8"/>`;
+    g += `<circle cx="${p.x}" cy="${p.y}" r="${r}" fill="#161b22" stroke="${nc}" stroke-width="2.2"/>`;
+    g += `<text x="${p.x}" y="${p.y+3.5}" text-anchor="middle" font-size="8.5" fill="${nc}" font-weight="700">${ROLE_LABEL[role]||role.toUpperCase().slice(0,5)}</text>`;
+    g += `</g>`;
+    g += `<text x="${p.x}" y="${p.y+r+15}" text-anchor="middle" font-size="9.5" fill="#e6edf3" font-family="Consolas,Menlo,monospace">${n.id}</text>`;
+    let sub = n.as ? 'AS'+n.as : '';
+    const vlabel = VENDOR_LABEL[(n.vendor||'').toLowerCase()] || (n.vendor||'');
+    if (vlabel) sub += (sub?'  ·  ':'') + vlabel;
+    if (sub) g += `<text x="${p.x}" y="${p.y+r+27}" text-anchor="middle" font-size="8.5" fill="#8b949e">${esc(sub)}</text>`;
+    P.push(g);
   });
 
-  // Stats bar at bottom
-  const upLinks = links.filter(l=>l.up).length;
-  svg += `  <rect x="10" y="${H-30}" width="${W-20}" height="22" rx="4" fill="#161b22" stroke="#30363d" stroke-width="1"/>
-  <text x="20" y="${H-15}" font-size="9" fill="#8b949e">Devices: ${nodes.length}</text>
-  <text x="100" y="${H-15}" font-size="9" fill="#3fb950">BGP Sessions: ${upLinks} UP</text>
-  <text x="230" y="${H-15}" font-size="9" fill="${links.length-upLinks>0?'#f85149':'#8b949e'}">DOWN: ${links.length-upLinks}</text>
-  <text x="${W-20}" y="${H-15}" text-anchor="end" font-size="9" fill="#58a6ff">${LIVE?'🟢 Live — localhost:5757':'⚪ Demo'}</text>
-</svg>`;
+  // ── legend + footer ──
+  const upB = links.filter(l=>l.type==='backbone'&&l.up).length;
+  const dnB = links.filter(l=>l.type==='backbone'&&!l.up).length;
+  P.push(`<text x="${minX}" y="${maxY+M-18}" fill="#8b949e" font-size="10">━ blue corridor = inter-region link bundle (N× 100G eBGP)   ·   ━ blue thin = intra-site transit between gateways   ·   ─ grey = intra-site link</text>`);
+  P.push(`<text x="${minX}" y="${maxY+M-4}" fill="#8b949e" font-size="10">◯ ring = router that carries an inter-region BGP session (co-gateways reach the corridor via the site core)   ·   node colour = role</text>`);
+  P.push(`<text x="${maxX}" y="${maxY+M-4}" text-anchor="end" font-size="10" fill="${dnB?'#f0883e':'#8b949e'}">${upB} inter-region sessions up${dnB?` · ${dnB} down`:''} · ${live?'live':'demo'}</text>`);
+  P.push('</svg>');
 
   container.textContent = '';
   const wrap = document.createElement('div');
-  wrap.style.cssText = 'padding:8px;flex:1';
-  wrap.innerHTML = svg;
+  wrap.style.cssText = 'padding:8px;flex:1;min-width:0';
+  wrap.innerHTML = P.join('\n');
   container.appendChild(wrap);
 }
 
