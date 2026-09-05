@@ -4424,6 +4424,11 @@ const TOPO_THEME = {
     fabric:'#8250df', fabricOpacity:0.55,
     downBad:'#bc4c00', glow:false,
     siteColors:{'NL-AMS':'1a7f37','EU-CDG':'9a6700','DE-FRA':'0969da','UK-LON':'8250df','US-NYC':'bc4c00','CLAB-DC1':'57606a'},
+    // Opaque 6-digit tints for the region boxes — plain #RRGGBB, not an
+    // alpha-blended #RRGGBBAA. Word's SVG renderer doesn't support the
+    // 8-digit hex-with-alpha notation (it painted the box solid black), so
+    // these are pre-mixed against white instead of computed via alpha.
+    siteTint:{'NL-AMS':'#e6f4ea','EU-CDG':'#fbf1da','DE-FRA':'#eaf2fc','UK-LON':'#f2e9fc','US-NYC':'#fceee1','CLAB-DC1':'#eef0f2'},
     role:{core:'0969da', edge:'cf222e', dist:'1a7f37', access:'1a7f37',
           fw:'9a6700', firewall:'9a6700', leaf:'1a7f37', spine:'8250df', host:'57606a'},
   },
@@ -4505,7 +4510,9 @@ function renderTopoSVG(container, nodes, links, opts){
   const bxs = visibleSites.map(s => SITE_BOX[s]);
   const minX = Math.min(...bxs.map(b=>b.x)),     maxX = Math.max(...bxs.map(b=>b.x+b.w));
   const minY = Math.min(...bxs.map(b=>b.y)),     maxY = Math.max(...bxs.map(b=>b.y+b.h));
-  const M=48, TOP=54, BOT=46;
+  // Print carries no on-image legend (the caller supplies its own caption
+  // text below the figure), so it only needs room for the status line.
+  const M=48, TOP=54, BOT=theme==='print' ? 26 : 46;
   const vbW = maxX-minX + 2*M, vbH = maxY-minY + 2*M + TOP + BOT;
   const vbX = minX-M, vbY = minY-M-TOP;
 
@@ -4521,7 +4528,7 @@ function renderTopoSVG(container, nodes, links, opts){
   visibleSites.forEach(s => {
     const b=SITE_BOX[s], c='#'+(SITE_COLORS[s]||(theme==='print'?'57606a':'8b949e'));
     const cnt=nodes.filter(n=>n.site===s).length;
-    const boxFill = theme==='print' ? c+'14' : c+'0c';
+    const boxFill = theme==='print' ? (T.siteTint[s] || '#eef0f2') : c+'0c';
     const boxStroke = theme==='print' ? c : c+'55';
     P.push(`<rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="16" fill="${boxFill}" stroke="${boxStroke}" stroke-width="1.5"/>`);
     P.push(`<text x="${b.x+16}" y="${b.y+25}" fill="${c}" font-size="15" font-weight="700">${s}</text>`);
@@ -4599,10 +4606,14 @@ function renderTopoSVG(container, nodes, links, opts){
   });
 
   // ── legend + footer ──
+  // Print carries no on-image legend text — it's meant to be captioned by
+  // hand in the destination document instead (kept out of the SVG itself).
   const upB = links.filter(l=>l.type==='backbone'&&l.up).length;
   const dnB = links.filter(l=>l.type==='backbone'&&!l.up).length;
-  P.push(`<text x="${minX}" y="${maxY+M-18}" fill="${T.muted}" font-size="10">━ blue corridor = inter-region link bundle (N× 100G eBGP, dashed = degraded)   ·   ━ blue thin = intra-site transit between gateways   ·   ─ grey = intra-site link</text>`);
-  P.push(`<text x="${minX}" y="${maxY+M-4}" fill="${T.muted}" font-size="10">◯ ring = router that carries an inter-region BGP session (co-gateways reach the corridor via the site core)   ·   node colour = role</text>`);
+  if (theme !== 'print') {
+    P.push(`<text x="${minX}" y="${maxY+M-18}" fill="${T.muted}" font-size="10">━ blue corridor = inter-region link bundle (N× 100G eBGP, dashed = degraded)   ·   ━ blue thin = intra-site transit between gateways   ·   ─ grey = intra-site link</text>`);
+    P.push(`<text x="${minX}" y="${maxY+M-4}" fill="${T.muted}" font-size="10">◯ ring = router that carries an inter-region BGP session (co-gateways reach the corridor via the site core)   ·   node colour = role</text>`);
+  }
   P.push(`<text x="${maxX}" y="${maxY+M-4}" text-anchor="end" font-size="10" fill="${dnB?T.downBad:T.muted}">${upB} inter-region sessions up${dnB?` · ${dnB} down`:''} · ${live?'live':'demo'}</text>`);
   P.push('</svg>');
 
